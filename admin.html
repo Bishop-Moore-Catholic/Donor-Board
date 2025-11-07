@@ -14,50 +14,199 @@
   button { padding:10px 14px; border:1px solid #ccc; background:#fff; border-radius:10px; cursor:pointer; }
   button.primary { background:#111; color:#fff; border-color:#111; }
   .muted { color:var(--muted); font-size:13px; }
+
   #chips { display:flex; flex-wrap:wrap; gap:10px; }
-  .chip { position:relative; display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border:1px solid var(--chip-border); border-radius:999px; background:#fff; font-size:14px; }
-  .menu { position:absolute; top:50%; left:100%; transform: translate(8px, -50%); display:flex; gap:8px; padding:6px; background:#fff; border:1px solid #ddd; border-radius:10px; box-shadow:0 6px 18px rgba(0,0,0,.08); opacity:0; pointer-events:none; transition:opacity .12s ease; z-index:5; }
-  .chip:hover .menu, .chip.menu-open .menu { opacity:1; pointer-events:auto; }
-  .menu .action-btn { width:32px; height:32px; border-radius:8px; border:1px solid #ddd; background:#fff; display:grid; place-items:center; cursor:pointer; }
-  .menu .action-btn svg { width:18px; height:18px; }
-  .menu .action-btn:hover { background:#111; border-color:#111; }
-  .menu .action-btn:hover svg { filter: invert(1); }
+  .chip {
+    position:relative;
+    display:inline-flex; align-items:center; gap:8px;
+    padding:8px 12px; border:1px solid var(--chip-border); border-radius:999px;
+    background:#fff; font-size:14px;
+    user-select: none;
+  }
+
+  /* Menu: CLICK to open. Always positioned to right; doesn't disappear until clicking elsewhere or toggling. */
+  .menu {
+    position:absolute; top:50%; left:100%;
+    transform: translate(8px, -50%);
+    display:flex; gap:8px; padding:6px;
+    background:#fff; border:1px solid #ddd; border-radius:10px;
+    box-shadow:0 6px 18px rgba(0,0,0,.08);
+    opacity:0; pointer-events:none; transition:opacity .12s ease;
+    z-index:5;
+  }
+  .chip.menu-open .menu { opacity:1; pointer-events:auto; }
+
+  .action-btn {
+    width:34px; height:34px; border-radius:8px; border:1px solid #ddd;
+    background:#fff; display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+  }
+  .action-btn svg { width:18px; height:18px; display:block; }
+  .action-btn:hover { background:#111; border-color:#111; }
+  .action-btn:hover svg { filter: invert(1); }
 </style>
 </head>
 <body>
   <h1>Donor Board – Admin</h1>
+
   <div class="row">
     <button id="openDisplay">Open Display Page</button>
-    <button id="clearAll">Clear All</button>
-    <span class="muted">Paste names (newline, comma, or tab-separated). Duplicates are ignored.</span>
+    <button id="clearAll" title="Remove all donors (affects display)">Clear All</button>
+    <span class="muted">Paste names (newline, comma, or tab-separated). Duplicates are ignored (case-insensitive, trimmed).</span>
   </div>
+
   <p></p>
-  <textarea id="nameInput" placeholder="e.g. Jane Smith, John Brown, Alicia Cruz"></textarea>
-  <p class="row"><button class="primary" id="addNames">Add Names</button></p>
+  <textarea id="nameInput" placeholder="e.g.
+Jane Smith	John D. Brown, Alicia Cruz
+The Morales Family"></textarea>
+  <p class="row">
+    <button class="primary" id="addNames">Add Names</button>
+  </p>
+
   <h3>Current donors (<span id="count">0</span>)</h3>
   <div id="chips"></div>
+
 <script>
 (() => {
-const KEY='donorList.v1';const CH=new BroadcastChannel('donors');
-const $=s=>document.querySelector(s);
-const normalizeName=s=>s.normalize('NFKC').replace(/\s+/g,' ').trim();
-const keyName=s=>normalizeName(s).toLowerCase();
-const load=()=>JSON.parse(localStorage.getItem(KEY)||'[]');
-const save=list=>localStorage.setItem(KEY,JSON.stringify(list));
-function sendEmphasize(name){CH.postMessage({type:'emphasize',name});}
-function deleteName(name){const k=keyName(name);const list=load().filter(d=>keyName(d.name)!==k);save(list);CH.postMessage({type:'remove',key:k});renderChips();}
-function makeChip(d){const chip=document.createElement('div');chip.className='chip';chip.dataset.name=d.name;chip.title=new Date(d.addedAt).toLocaleString();
-const label=document.createElement('span');label.textContent=d.name;
-const menu=document.createElement('div');menu.className='menu';
-const emph=document.createElement('button');emph.className='action-btn';emph.dataset.act='emph';emph.title='Emphasize';emph.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l2.4 4.86 5.37.78-3.88 3.78.92 5.36L12 15.9 7.19 17.78l.92-5.36L4.23 8.64l5.37-.78L12 3z"/></svg>';
-const del=document.createElement('button');del.className='action-btn';del.dataset.act='del';del.title='Delete';del.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M9 6V4h6v2M8 6l1 14h6l1-14"/></svg>';
-menu.appendChild(emph);menu.appendChild(del);chip.appendChild(label);chip.appendChild(menu);return chip;}
-function renderChips(){const list=load();$('#count').textContent=list.length;const frag=document.createDocumentFragment();list.sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'})).forEach(d=>frag.appendChild(makeChip(d)));$('#chips').innerHTML='';$('#chips').appendChild(frag);}
-function splitDonorText(raw){return raw.split(new RegExp('[,\t\r\n]+','g'));}
-function addFromInput(){const raw=$('#nameInput').value;const parts=splitDonorText(raw).map(normalizeName).filter(Boolean);if(!parts.length)return;const list=load();const existing=new Set(list.map(d=>keyName(d.name)));const newOnes=[];for(const nm of parts){const k=keyName(nm);if(!existing.has(k)){existing.add(k);const rec={name:nm,id:(crypto?.randomUUID?.()||Math.random().toString(36).slice(2)),addedAt:Date.now()};list.push(rec);newOnes.push(rec);}}if(newOnes.length){save(list);CH.postMessage({type:'added',donors:newOnes});renderChips();}$('#nameInput').value='';$('#nameInput').focus();}
-function clearAll(){if(!confirm('Clear all donors?'))return;save([]);CH.postMessage({type:'reset'});renderChips();}
-document.addEventListener('click',e=>{const btn=e.target.closest('.action-btn');if(!btn)return;const chip=e.target.closest('.chip');if(!chip)return;const name=chip.dataset.name;const act=btn.dataset.act;if(act==='emph')sendEmphasize(name);if(act==='del')deleteName(name);});
-document.addEventListener('touchend',e=>{const chip=e.target.closest('.chip');if(chip){chip.classList.toggle('menu-open');}});
-$('#addNames').onclick=addFromInput;$('#clearAll').onclick=clearAll;$('#openDisplay').onclick=()=>window.open('display.html','DonorDisplay','noopener,noreferrer');$('#nameInput').addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter')addFromInput();});window.addEventListener('storage',e=>{if(e.key===KEY)renderChips();});renderChips();
+  const KEY = 'donorList.v1';
+  const CH = new BroadcastChannel('donors');
+  const $ = sel => document.querySelector(sel);
+
+  const normalizeName = s => s.normalize('NFKC').replace(/\s+/g,' ').trim();
+  const keyName = s => normalizeName(s).toLowerCase();
+  const load = () => JSON.parse(localStorage.getItem(KEY) || '[]');
+  const save = list => localStorage.setItem(KEY, JSON.stringify(list));
+
+  function sendEmphasize(name) { CH.postMessage({ type:'emphasize', name }); }
+  function deleteName(name) {
+    const k = keyName(name);
+    const list = load().filter(d => keyName(d.name) !== k);
+    save(list);
+    CH.postMessage({ type:'remove', key: k });
+    renderChips();
+  }
+
+  function makeChip(d){
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.dataset.name = d.name;
+    chip.title = new Date(d.addedAt).toLocaleString();
+
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = d.name;
+
+    const menu = document.createElement('div');
+    menu.className = 'menu';
+
+    const emph = document.createElement('button');
+    emph.className = 'action-btn'; emph.setAttribute('data-act','emph'); emph.title = 'Emphasize';
+    emph.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l2.4 4.86 5.37.78-3.88 3.78.92 5.36L12 15.9 7.19 17.78l.92-5.36L4.23 8.64l5.37-.78L12 3z"/></svg>';
+    const del = document.createElement('button');
+    del.className = 'action-btn'; del.setAttribute('data-act','del'); del.title = 'Delete';
+    del.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M9 6V4h6v2M8 6l1 14h6l1-14"/></svg>';
+
+    menu.appendChild(emph); menu.appendChild(del);
+    chip.appendChild(label); chip.appendChild(menu);
+    return chip;
+  }
+
+  function renderChips() {
+    const list = load();
+    $('#count').textContent = list.length;
+    const frag = document.createDocumentFragment();
+    list.sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'})).forEach(d => {
+      frag.appendChild(makeChip(d));
+    });
+    $('#chips').innerHTML = '';
+    $('#chips').appendChild(frag);
+  }
+
+  // Split on commas, tabs, CR or LF
+  function splitDonorText(raw) { return raw.split(new RegExp('[,\t\r\n]+','g')); }
+
+  function addFromInput() {
+    const raw = $('#nameInput').value;
+    const parts = splitDonorText(raw).map(normalizeName).filter(Boolean);
+    if (!parts.length) return;
+
+    const list = load();
+    const existing = new Set(list.map(d => keyName(d.name)));
+    const newOnes = [];
+
+    for (const nm of parts) {
+      const k = keyName(nm);
+      if (!existing.has(k)) {
+        existing.add(k);
+        const rec = { name: nm, id: (crypto?.randomUUID?.() || Math.random().toString(36).slice(2)), addedAt: Date.now() };
+        list.push(rec);
+        newOnes.push(rec);
+      }
+    }
+
+    if (newOnes.length) {
+      save(list);
+      CH.postMessage({ type:'added', donors: newOnes });
+      renderChips();
+    }
+
+    $('#nameInput').value = '';
+    $('#nameInput').focus();
+  }
+
+  function clearAll() {
+    if (!confirm('Clear all donors? This will immediately update the display.')) return;
+    save([]);
+    CH.postMessage({ type:'reset' });
+    renderChips();
+  }
+
+  // Global actions
+  document.addEventListener('click', (e) => {
+    // Toggle menu when clicking a chip (not clicking inside menu)
+    const chip = e.target.closest('.chip');
+    const clickedBtn = e.target.closest('.action-btn');
+    const anyMenu = e.target.closest('.menu');
+    if (chip && !anyMenu && !clickedBtn) {
+      // Close others
+      document.querySelectorAll('.chip.menu-open').forEach(el => { if (el !== chip) el.classList.remove('menu-open'); });
+      chip.classList.toggle('menu-open');
+    }
+
+    // Handle action buttons
+    if (clickedBtn && chip) {
+      const name = chip.dataset.name;
+      const act = clickedBtn.getAttribute('data-act');
+      if (act === 'emph') sendEmphasize(name);
+      if (act === 'del') deleteName(name);
+    }
+
+    // Close when clicking outside any chip/menu
+    if (!chip && !anyMenu) {
+      document.querySelectorAll('.chip.menu-open').forEach(el => el.classList.remove('menu-open'));
+    }
+  });
+
+  // Touch: tap chip toggles menu
+  document.addEventListener('touchend', (e) => {
+    const chip = e.target.closest('.chip');
+    if (chip) {
+      document.querySelectorAll('.chip.menu-open').forEach(el => { if (el !== chip) el.classList.remove('menu-open'); });
+      chip.classList.toggle('menu-open');
+    }
+  });
+
+  $('#addNames').addEventListener('click', addFromInput);
+  $('#clearAll').addEventListener('click', clearAll);
+  $('#openDisplay').addEventListener('click', () => window.open('display.html', 'DonorDisplay', 'noopener,noreferrer'));
+  $('#nameInput').addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') addFromInput();
+  });
+
+  window.addEventListener('storage', (e) => { if (e.key === KEY) renderChips(); });
+
+  renderChips();
 })();
-</script></body></html>
+</script>
+</body>
+</html>
