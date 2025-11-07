@@ -1,7 +1,7 @@
-# Donor Board (D3-cloud basic, no animations)
+# Donor Board (d3-cloud streaming updates)
 
-- `admin.html`: now accepts newline, comma **and tab** separated names (deduped).
-- `display.html`: returns to the basic d3-cloud layout, **no animations**, **no center image**. Also sets `viewBox` and correct center translation to avoid the "stuck in the corner" issue.
+- `display.html` streams words in during layout via the d3-cloud **`word`** event, then does a gentle reconcile on **`end`** so redraws aren't jarring.
+- `admin.html` accepts newline, comma, and tab separated names; deduped case-insensitively.
 
 ## Run locally
 ```bash

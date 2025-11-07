@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Donor Board – Display (d3-cloud basic, no animations)</title>
+<title>Donor Board – Display (d3-cloud streaming)</title>
 <link rel="icon" href="assets/favicon.svg">
 <script src="https://unpkg.com/d3@7"></script>
 <script src="https://unpkg.com/d3-cloud/build/d3.layout.cloud.js"></script>
@@ -32,138 +32,129 @@
 
   function resize(){
     W = stage.clientWidth; H = stage.clientHeight;
-    svg.attr('viewBox', `0 0 ${W} ${H}`);
-    drawLayout(); // reflow on resize
+    svg.attr('viewBox', `0 0 \${W} \${H}`);
+    redraw();
   }
   window.addEventListener('resize', resize);
 
-  function load() {
-    try { return JSON.parse(localStorage.getItem(KEY)) || []; }
-    catch { return []; }
-  }
+  function load() { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; } }
   const normalizeName = s => s.normalize('NFKC').replace(/\s+/g,' ').trim();
+  const keyName = s => normalizeName(s).toLowerCase();
 
-  function getWords() {
-    const list = load();
-    // Simple stable order: alphabetical for now
-    const ordered = list.slice().sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}));
+  function wordsFromDonors() {
     const baseSizePx = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--base-size')) || 28;
-    return ordered.map(d => ({ text: d.name, size: baseSizePx }));
+    const list = load().slice().sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}));
+    return list.map(d => ({ text: d.name, key: keyName(d.name), size: baseSizePx }));
   }
 
-  let layoutToken = 0;
+  // Store previous final positions so update tweens are smooth
+  let prevPos = new Map(); // key -> {x,y,rotate,size}
 
-  function drawLayout() {
-    const baseWords = getWords();
-    const token = ++layoutToken;
+  function redraw() {
+    const CENTERX = W/2, CENTERY = H/2;
+    const words = wordsFromDonors();
 
-    if (!baseWords.length) {
-      svg.selectAll('*').remove();
-      return;
-    }
+    const layer = svg.selectAll('g.words').data([null]).join('g').attr('class','words');
 
-    const PAD = 4;
-    const MIN_SIZE = 12;
-    const MAX_ATTEMPTS = 8;
-    let attempt = 0;
-    let scale = 1;
+    // Streaming render: add each placed word immediately
+    const streamed = new Set();
 
-    function runLayout() {
-      const words = baseWords.map(d => ({
-        text: d.text,
-        size: Math.max(MIN_SIZE, d.size * scale)
-      }));
+    const cloud = d3.layout.cloud()
+      .size([W, H])
+      .words(words)
+      .padding(4)
+      .font('system-ui, sans-serif')
+      .fontSize(d => d.size)
+      .rotate(() => 0)
+      .timeInterval(10)
+      .on('word', d => {
+        const k = keyName(d.text);
+        if (streamed.has(k)) return;
+        streamed.add(k);
+        const pos = { x: d.x + CENTERX, y: d.y + CENTERY, rotate: d.rotate || 0, size: d.size };
 
-      const cloud = d3.layout.cloud()
-        .size([W, H])
-        .words(words)
-        .padding(PAD)
-        .font('system-ui, sans-serif')
-        .fontSize(d => d.size)
-        .rotate(() => 0)
-        .spiral('archimedean')
-        .on('end', positioned => {
-          if (token !== layoutToken) return; // stale run
+        // If text node exists (from before), tween towards new streaming position; else create then fade in
+        const sel = layer.selectAll('text.word').filter(n => n && n.text === d.text);
+        if (!sel.size()) {
+          layer.append('text')
+            .attr('class', 'word')
+            .style('font-family', 'system-ui, sans-serif')
+            .text(d.text)
+            .attr('text-anchor', 'middle')
+            .attr('dominant-baseline', 'middle')
+            .style('opacity', 0)
+            .attr('font-size', prevPos.get(k)?.size || d.size)
+            .attr('transform', () => {
+              const p = prevPos.get(k);
+              const x0 = p ? p.x : CENTERX, y0 = p ? p.y : CENTERY, r0 = p ? p.rotate : 0;
+              return `translate(\${x0},\${y0}) rotate(\${r0})`;
+            })
+            .transition().duration(500)
+            .style('opacity', 1)
+            .attr('font-size', pos.size)
+            .attr('transform', `translate(\${pos.x},\${pos.y}) rotate(\${pos.rotate})`);
+        } else {
+          sel.transition().duration(500)
+            .attr('font-size', pos.size)
+            .attr('transform', `translate(\${pos.x},\${pos.y}) rotate(\${pos.rotate})`);
+        }
+      })
+      .on('end', placed => {
+        // Final gentle reconcile (move anything that needs a small nudge)
+        const nextPos = new Map();
+        placed.forEach(d => nextPos.set(keyName(d.text),
+          { x: d.x + CENTERX, y: d.y + CENTERY, rotate: d.rotate || 0, size: d.size }));
 
-          if (!positioned.length) {
-            svg.selectAll('*').remove();
-            return;
-          }
+        const sel = layer.selectAll('text.word').data(placed, d => d.text);
 
-          const minX = d3.min(positioned, d => d.x - d.width / 2) ?? 0;
-          const maxX = d3.max(positioned, d => d.x + d.width / 2) ?? 0;
-          const minY = d3.min(positioned, d => d.y - d.height / 2) ?? 0;
-          const maxY = d3.max(positioned, d => d.y + d.height / 2) ?? 0;
+        // EXIT any that disappeared
+        sel.exit()
+          .transition().duration(400).style('opacity', 0).remove();
 
-          const boundsWidth = maxX - minX + PAD * 2;
-          const boundsHeight = maxY - minY + PAD * 2;
+        // ENTER any that somehow weren't streamed (edge cases)
+        const enter = sel.enter().append('text')
+          .attr('class', 'word')
+          .style('font-family', 'system-ui, sans-serif')
+          .text(d => d.text)
+          .attr('text-anchor', 'middle')
+          .attr('dominant-baseline', 'middle')
+          .style('opacity', 0)
+          .attr('font-size', d => (prevPos.get(keyName(d.text))?.size || d.size))
+          .attr('transform', () => {
+            const p = prevPos.get(keyName(d.text));
+            const x0 = p ? p.x : CENTERX, y0 = p ? p.y : CENTERY, r0 = p ? p.rotate : 0;
+            return `translate(\${x0},\${y0}) rotate(\${r0})`;
+          });
 
-          const fits = boundsWidth <= W && boundsHeight <= H;
+        enter.merge(sel)
+          .transition().duration(700)
+          .style('opacity', 1)
+          .attr('font-size', d => d.size)
+          .attr('transform', d => {
+            const p = nextPos.get(keyName(d.text));
+            return `translate(\${p.x},\${p.y}) rotate(\${p.rotate})`;
+          });
 
-          if (!fits && attempt < MAX_ATTEMPTS) {
-            const shrinkX = W / boundsWidth;
-            const shrinkY = H / boundsHeight;
-            const shrink = Math.max(0.5, Math.min(shrinkX, shrinkY) * 0.95);
-            if (shrink < 1) {
-              scale *= shrink;
-            } else {
-              scale *= 0.9;
-            }
-            attempt++;
-            runLayout();
-            return;
-          }
+        prevPos = nextPos;
+      });
 
-          draw(positioned);
-        });
-
-      cloud.start();
-    }
-
-    runLayout();
-
-    function draw(wds) {
-      const CENTERX = W / 2;
-      const CENTERY = H / 2;
-
-      const g = svg.selectAll('g.words').data([null]);
-      g.enter().append('g').attr('class', 'words');
-      const layer = svg.select('g.words');
-
-      const sel = layer.selectAll('text.word').data(wds, d => d.text);
-
-      sel.exit().remove();
-
-      const enter = sel.enter().append('text')
-        .attr('class', 'word')
-        .style('font-family', 'system-ui, sans-serif')
-        .text(d => d.text)
-        .attr('text-anchor', 'middle')
-        .attr('dominant-baseline', 'middle');
-
-      enter.merge(sel)
-        .attr('font-size', d => d.size)
-        .attr('transform', d => `translate(${d.x + CENTERX},${d.y + CENTERY}) rotate(${d.rotate || 0})`);
-    }
+    cloud.start();
   }
 
-  function fullRender() { drawLayout(); }
-
-  function addNew() {
-    // For debugging, just re-run layout (no animations); order is stable so layout is reasonably consistent
-    drawLayout();
-  }
+  function fullRender() { prevPos.clear(); redraw(); }
 
   CH.onmessage = (ev) => {
     const msg = ev.data || {};
-    if (msg.type === 'added' && Array.isArray(msg.donors)) addNew();
+    if (msg.type === 'added' && Array.isArray(msg.donors)) redraw();
     else if (msg.type === 'reset') {
       svg.selectAll('*').remove();
       fullRender();
     }
   };
 
-  // Boot
+  window.addEventListener('storage', (e) => { if (e.key === KEY) redraw(); });
+
+  // boot
   resize();
   fullRender();
 })();
