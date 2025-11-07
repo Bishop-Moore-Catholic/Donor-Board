@@ -1,17 +1,4 @@
-# Donor Board (stable layout fix + scaling)
+# Donor Board (debug logs + button width removed)
 
-**Admin**
-- Click-to-open chip menus (centered glyphs), emphasize/delete controls.
-
-**Display**
-- Rebuilt for stability: synchronous d3-cloud layout (no `timeInterval`/streaming).
-- Smooth transitions on redraw; positions relax vertically to reduce overlaps.
-- Font auto-scales after 50 names (down to ~60% by 250 names).
-- Emphasize toggles persist via `localStorage` and survive redraws.
-
-Run locally:
-```bash
-python3 -m http.server 5500
-# http://localhost:5500/admin.html
-# http://localhost:5500/display.html
-```
+- **display.html**: logs total donors and placed word count to the console on each redraw.
+- **admin.html**: removed explicit `width` on `.action-btn`; uses height + padding so glyphs are not squished.

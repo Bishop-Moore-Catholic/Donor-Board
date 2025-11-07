@@ -38,9 +38,10 @@
   .chip.menu-open .menu { opacity:1; pointer-events:auto; }
 
   .action-btn {
-    width:34px; height:34px; border-radius:8px; border:1px solid #ddd;
+    /* Removed width per user request to fix glyph scaling */
+    height:34px; border-radius:8px; border:1px solid #ddd;
     background:#fff; display:flex; align-items:center; justify-content:center;
-    cursor:pointer;
+    cursor:pointer; padding:0 8px; /* add some horizontal padding */
   }
   .action-btn svg { width:18px; height:18px; display:block; }
   .action-btn:hover { background:#111; border-color:#111; }

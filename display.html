@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Donor Board – Display (stable layout + scaling)</title>
+<title>Donor Board – Display (debug count)</title>
 <link rel="icon" href="assets/favicon.svg">
 <script src="https://unpkg.com/d3@7"></script>
 <script src="https://unpkg.com/d3-cloud/build/d3.layout.cloud.js"></script>
@@ -59,6 +59,8 @@
 
   function wordsFromDonors() {
     const list = load().slice().sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}));
+    // Debug log: how many names in storage
+    console.log('[DonorBoard] total donors:', list.length);
     const size = baseFontPx(list.length);
     return list.map(d => ({ text: d.name, key: keyName(d.name), size }));
   }
@@ -138,7 +140,6 @@
     if (emphasized.has(nameKey)) emphasized.delete(nameKey);
     else emphasized.add(nameKey);
     saveEmph(emphasized);
-    // re-apply transform to that node if it exists
     const p = prevPos.get(nameKey);
     const node = svg.selectAll('text.word').filter(function(){ return this.textContent && nameKey === keyName(this.textContent); });
     if (!node.size() || !p) { redraw(); return; }
@@ -151,7 +152,6 @@
     const CENTERX = W/2, CENTERY = H/2;
     const words = wordsFromDonors();
 
-    // Build layout synchronously (more reliable for big lists)
     const cloud = d3.layout.cloud()
       .canvas(hiDpiCanvas)
       .size([W, H])
@@ -165,10 +165,12 @@
     cloud.start();
 
     function draw(placed) {
+      // Debug log: how many words were successfully placed
+      console.log('[DonorBoard] placed words:', placed.length);
+
       let nextPos = new Map();
       placed.forEach(d => nextPos.set(keyName(d.text), { x: d.x + CENTERX, y: d.y + CENTERY, rotate: d.rotate || 0, size: d.size }));
 
-      // Relax vertically
       nextPos = relaxPositions(nextPos);
 
       const layer = svg.selectAll('g.words').data([null]).join('g').attr('class','words');
