@@ -25,7 +25,6 @@
     user-select: none;
   }
 
-  /* Click menu to the right of chip */
   .menu {
     position:absolute; top:50%; left:100%;
     transform: translate(8px, -50%);
@@ -71,6 +70,7 @@ The Morales Family"></textarea>
 <script>
 (() => {
   const KEY = 'donorList.v1';
+  const EMPH_KEY = 'donorEmphasized.v1';
   const CH = new BroadcastChannel('donors');
   const $ = sel => document.querySelector(sel);
 
@@ -124,7 +124,6 @@ The Morales Family"></textarea>
     $('#chips').appendChild(frag);
   }
 
-  // Split on commas, tabs, CR or LF
   function splitDonorText(raw) { return raw.split(new RegExp('[,\t\r\n]+','g')); }
 
   function addFromInput() {
@@ -158,12 +157,16 @@ The Morales Family"></textarea>
 
   function clearAll() {
     if (!confirm('Clear all donors? This will immediately update the display.')) return;
-    save([]);
+    // clear donors
+    localStorage.setItem(KEY, '[]');
+    // clear emphasized
+    localStorage.setItem(EMPH_KEY, '[]');
+    // broadcast both resets
     CH.postMessage({ type:'reset' });
+    CH.postMessage({ type:'clearEmph' });
     renderChips();
   }
 
-  // Click interactions
   document.addEventListener('click', (e) => {
     const chip = e.target.closest('.chip');
     const clickedBtn = e.target.closest('.action-btn');
@@ -177,14 +180,12 @@ The Morales Family"></textarea>
       return;
     }
 
-    // Toggle menu on chip click (not clicking inside menu)
     if (chip && !anyMenu) {
       document.querySelectorAll('.chip.menu-open').forEach(el => { if (el !== chip) el.classList.remove('menu-open'); });
       chip.classList.toggle('menu-open');
       return;
     }
 
-    // Click outside closes all
     if (!chip && !anyMenu) {
       document.querySelectorAll('.chip.menu-open').forEach(el => el.classList.remove('menu-open'));
     }

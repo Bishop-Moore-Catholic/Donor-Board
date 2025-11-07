@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Donor Board – Display (adaptive sizing)</title>
+<title>Donor Board – Display (adaptive + stable RNG)</title>
 <link rel="icon" href="assets/favicon.svg">
 <script src="https://unpkg.com/d3@7"></script>
 <script src="https://unpkg.com/d3-cloud/build/d3.layout.cloud.js"></script>
@@ -19,7 +19,9 @@
 </head>
 <body>
 <header>Thank you to our generous donors</header>
-<div id="stage"><svg id="cloud" aria-label="Donor word cloud"></svg></div>
+<div id="stage">
+  <svg id="cloud" aria-label="Donor word cloud"></svg>
+</div>
 
 <script>
 (() => {
@@ -49,8 +51,8 @@
   let pending = false;
 
   function dynamicPadding(d, padScale=1) {
-    const base = Math.max(10, Math.round(d.size * 0.35));
-    const extra = Math.min(28, Math.floor(d.text.length * 0.7));
+    const base = Math.max(10, Math.round(d.size * 0.33));
+    const extra = Math.min(24, Math.floor(d.text.length * 0.6));
     return Math.round((base + extra) * padScale);
   }
 
@@ -62,6 +64,16 @@
     const ctx = c.getContext('2d');
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     return c;
+  }
+
+  // Seeded RNG for stability
+  function seededRandom(seed) {
+    let s = seed >>> 0;
+    return function() {
+      // xorshift32
+      s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
+      return ((s >>> 0) / 4294967296);
+    };
   }
 
   function relaxPositions(nextPos, sizePx) {
@@ -123,28 +135,41 @@
     const total = donors.length;
     console.log('[DonorBoard] total donors:', total);
 
-    // Start from computed base and try smaller if placement ratio is low
-    let sizePx = (total <= 50) ? cssBase() : cssBase() * Math.max(0.58, 1 - 0.42 * ((total - 50) / 200));
+    // Remove emphasized flags for names that no longer exist
+    let changed = false;
+    emphasized.forEach(k => {
+      if (!donors.find(d => k === (d.name.normalize('NFKC').replace(/\s+/g,' ').trim()).toLowerCase())) {
+        emphasized.delete(k); changed = true;
+      }
+    });
+    if (changed) saveEmph(emphasized);
+
+    // Base font size and adaptive trials
+    const base = (total <= 50) ? cssBase() : cssBase() * Math.max(0.58, 1 - 0.42 * ((total - 50) / 200));
     const tries = [
       {scale:1.00, pad:1.00},
-      {scale:0.90, pad:0.95},
-      {scale:0.82, pad:0.9},
-      {scale:0.74, pad:0.85},
-      {scale:0.66, pad:0.8}
+      {scale:0.92, pad:0.95},
+      {scale:0.85, pad:0.9},
+      {scale:0.78, pad:0.85},
+      {scale:0.72, pad:0.80},
+      {scale:0.66, pad:0.78},
     ];
 
-    let attemptIndex = 0;
-
     const CENTERX = W/2, CENTERY = H/2;
+    let attemptIndex = 0;
+    inFlight = true;
 
-    function attempt(){
+    const seed = 123456 ^ total ^ Math.floor(W) ^ Math.floor(H); // stable per geometry & count
+    const rng = seededRandom(seed);
+
+    (function attempt(){
       if (attemptIndex >= tries.length){ inFlight=false; if (pending){ pending=false; redrawAdaptive(); } return; }
-      inFlight = true;
       const t = tries[attemptIndex++];
-      const fontPx = sizePx * t.scale;
+      const fontPx = base * t.scale;
       const padScale = t.pad;
 
-      const words = donors.map(d => ({ text: d.name, key: keyName(d.name), size: fontPx }));
+      const words = donors.map(d => ({ text: d.name, key: (d.name.normalize('NFKC').replace(/\s+/g,' ').trim()).toLowerCase(), size: fontPx }));
+
       const cloud = d3.layout.cloud()
         .canvas(hiDpiCanvas)
         .size([W, H])
@@ -152,24 +177,23 @@
         .padding(d => dynamicPadding(d, padScale))
         .font('system-ui, sans-serif')
         .fontSize(d => d.size)
+        .spiral('rectangular')
+        .random(rng)
         .rotate(() => 0)
         .on('end', placed => {
           console.log('[DonorBoard] attempt', attemptIndex, 'fontPx', fontPx.toFixed(1), 'padScale', padScale, 'placed', placed.length);
-          const target = Math.min(total, 180); // practical cap for visibility
-          const ratio = placed.length / (total || 1);
-          // If we placed too few, try next (smaller) settings
-          if (placed.length < Math.min(target, total * 0.85) && attemptIndex < tries.length){
-            inFlight = false;
-            attempt();
+          const need = Math.min(total, 400); // cap for perf/legibility
+          if (placed.length < Math.min(need, Math.floor(total * 0.85)) && attemptIndex < tries.length) {
+            attempt(); // try smaller
             return;
           }
 
           let nextPos = new Map();
-          placed.forEach(d => nextPos.set(keyName(d.text), { x: d.x + CENTERX, y: d.y + CENTERY, rotate: d.rotate || 0, size: d.size }));
+          placed.forEach(d => nextPos.set(d.key, { x: d.x + CENTERX, y: d.y + CENTERY, rotate: d.rotate || 0, size: d.size }));
           nextPos = relaxPositions(nextPos, fontPx);
 
           const layer = svg.selectAll('g.words').data([null]).join('g').attr('class','words');
-          const sel = layer.selectAll('text.word').data(placed, d => d.text);
+          const sel = layer.selectAll('text.word').data(placed, d => d.key);
 
           sel.exit().transition().duration(200).style('opacity', 0).remove();
 
@@ -184,13 +208,13 @@
             .attr('transform', 'translate(' + CENTERX + ',' + CENTERY + ')');
 
           enter.merge(sel)
-            .classed('emph', d => emphasized.has(keyName(d.text)))
+            .classed('emph', d => emphasized.has(d.key))
             .transition().duration(450)
             .style('opacity', 1)
             .attr('font-size', d => d.size)
             .attr('transform', d => {
-              const p = nextPos.get(keyName(d.text));
-              const scale = emphasized.has(keyName(d.text)) ? 1.35 : 1;
+              const p = nextPos.get(d.key);
+              const scale = emphasized.has(d.key) ? 1.35 : 1;
               return 'translate(' + p.x + ',' + p.y + ') rotate(' + (d.rotate||0) + ') scale(' + scale + ')';
             });
 
@@ -200,9 +224,7 @@
         });
 
       cloud.start();
-    }
-
-    attempt();
+    })();
   }
 
   function toggleEmphasize(nameKey){
@@ -210,7 +232,7 @@
     else emphasized.add(nameKey);
     saveEmph(emphasized);
     const p = prevPos.get(nameKey);
-    const node = svg.selectAll('text.word').filter(function(){ return this.textContent && nameKey === keyName(this.textContent); });
+    const node = svg.selectAll('text.word').filter(function(){ return this.textContent && nameKey === (this.textContent.normalize('NFKC').replace(/\s+/g,' ').trim()).toLowerCase(); });
     if (!node.size() || !p) { scheduleRedraw(); return; }
     node.classed('emph', emphasized.has(nameKey))
       .transition().duration(200)
@@ -223,17 +245,21 @@
     else if (msg.type === 'reset') {
       svg.selectAll('*').remove();
       prevPos.clear();
+      emphasized.clear(); saveEmph(emphasized); // also clear emphasize on resets
       scheduleRedraw();
     }
+    else if (msg.type === 'clearEmph') { emphasized.clear(); saveEmph(emphasized); scheduleRedraw(); }
     else if (msg.type === 'emphasize' && msg.name) {
-      toggleEmphasize(keyName(msg.name));
+      const k = (msg.name.normalize('NFKC').replace(/\s+/g,' ').trim()).toLowerCase();
+      toggleEmphasize(k);
     }
     else if (msg.type === 'remove' && msg.key) {
+      emphasized.delete(msg.key); saveEmph(emphasized);
       scheduleRedraw();
     }
   };
 
-  window.addEventListener('storage', (e) => { if (e.key === KEY) scheduleRedraw(); });
+  window.addEventListener('storage', (e) => { if (e.key === KEY || e.key === EMPH_KEY) scheduleRedraw(); });
 
   setViewBox();
   scheduleRedraw();

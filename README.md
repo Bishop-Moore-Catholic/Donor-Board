@@ -1,15 +1,16 @@
-# Donor Board (adaptive sizing + single-flight)
+# Donor Board (clear-emphasize + adaptive + seeded)
 
-- **display.html**: Adaptive loop tries smaller font/padding if too few words placed. Logs each attempt with font size, pad scale, and words placed.
-- Prevents overlapping concurrent layouts with a single-flight guard.
-- Still keeps emphasize toggle + vertical relaxation.
-- **admin.html**: `.action-btn` width removed per request.
+**Admin**
+- `Clear All` now also clears **emphasized** names and sends a `clearEmph` broadcast.
 
-Check your console for lines like:
+**Display**
+- Clears emphasized names on `reset`, `clearEmph`, and when removed individually.
+- Adaptive sizing tries several (font, padding) combos; accepts when ≥85% placed (up to 400 cap).
+- **Seeded RNG** for stable layouts (per viewport + count) and **rectangular** spiral for tighter packing.
+- Keeps debug logs of totals and each attempt.
 
-```
-[DonorBoard] total donors: 180
-[DonorBoard] attempt 1 fontPx 28.0 padScale 1 placed 72
-[DonorBoard] attempt 2 fontPx 25.2 padScale 0.95 placed 121
-[DonorBoard] attempt 3 fontPx 23.0 padScale 0.9 placed 156
+Run:
+```bash
+python3 -m http.server 5500
+# open admin.html and display.html
 ```
