@@ -1,16 +1,17 @@
-# Donor Board (clear-emphasize + adaptive + seeded)
+# Donor Board (dense packing + no overlaps)
 
-**Admin**
-- `Clear All` now also clears **emphasized** names and sends a `clearEmph` broadcast.
+**What’s new**
+- **Max 300 names** (configurable via `?max=NNN`, capped 300).
+- **Bias**: `?bias=larger|balanced|denser` (default balanced). This sets the placement acceptance ratio (80%, 95%, 97%).  
+- **Adaptive attempts** down to 0.70 font scale & padding.
+- **Accurate text measurement** using an offscreen canvas to estimate true label widths.
+- **Quadtree collision resolution** pass ensures *no overlaps* while keeping a dense look.
+- Keeps **seeded RNG** and **rectangular spiral**.
 
-**Display**
-- Clears emphasized names on `reset`, `clearEmph`, and when removed individually.
-- Adaptive sizing tries several (font, padding) combos; accepts when ≥85% placed (up to 400 cap).
-- **Seeded RNG** for stable layouts (per viewport + count) and **rectangular** spiral for tighter packing.
-- Keeps debug logs of totals and each attempt.
-
-Run:
-```bash
+**Run**
+```
 python3 -m http.server 5500
 # open admin.html and display.html
+# for maximal density:
+# http://localhost:5500/display.html?bias=denser&max=300
 ```

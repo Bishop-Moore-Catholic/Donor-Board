@@ -37,7 +37,6 @@
   .chip.menu-open .menu { opacity:1; pointer-events:auto; }
 
   .action-btn {
-    /* width removed to prevent glyph squish */
     height:34px; border-radius:8px; border:1px solid #ddd;
     background:#fff; display:flex; align-items:center; justify-content:center;
     cursor:pointer; padding:0 8px;
@@ -157,11 +156,8 @@ The Morales Family"></textarea>
 
   function clearAll() {
     if (!confirm('Clear all donors? This will immediately update the display.')) return;
-    // clear donors
     localStorage.setItem(KEY, '[]');
-    // clear emphasized
     localStorage.setItem(EMPH_KEY, '[]');
-    // broadcast both resets
     CH.postMessage({ type:'reset' });
     CH.postMessage({ type:'clearEmph' });
     renderChips();

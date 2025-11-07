@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Donor Board – Display (adaptive + stable RNG)</title>
+<title>Donor Board – Display (dense + collision-free)</title>
 <link rel="icon" href="assets/favicon.svg">
 <script src="https://unpkg.com/d3@7"></script>
 <script src="https://unpkg.com/d3-cloud/build/d3.layout.cloud.js"></script>
@@ -19,9 +19,7 @@
 </head>
 <body>
 <header>Thank you to our generous donors</header>
-<div id="stage">
-  <svg id="cloud" aria-label="Donor word cloud"></svg>
-</div>
+<div id="stage"><svg id="cloud" aria-label="Donor word cloud"></svg></div>
 
 <script>
 (() => {
@@ -35,6 +33,11 @@
   function setViewBox(){ svg.attr('viewBox', '0 0 ' + W + ' ' + H); }
   function resize(){ W = stage.clientWidth; H = stage.clientHeight; setViewBox(); scheduleRedraw(); }
   window.addEventListener('resize', resize);
+
+  // URL params
+  const url = new URL(location.href);
+  const bias = url.searchParams.get('bias') || 'balanced'; // larger | balanced | denser
+  const MAX_CAP = Math.min(+(url.searchParams.get('max') || 300), 300);
 
   function load() { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; } }
   const normalizeName = s => s.normalize('NFKC').replace(/\s+/g,' ').trim();
@@ -50,11 +53,13 @@
   let inFlight = false;
   let pending = false;
 
-  function dynamicPadding(d, padScale=1) {
-    const base = Math.max(10, Math.round(d.size * 0.33));
-    const extra = Math.min(24, Math.floor(d.text.length * 0.6));
-    return Math.round((base + extra) * padScale);
+  function measureFactory() {
+    const ratio = window.devicePixelRatio || 1;
+    const c = document.createElement('canvas'); c.width = 512*ratio; c.height = 160*ratio;
+    const ctx = c.getContext('2d'); ctx.setTransform(ratio,0,0,ratio,0,0);
+    return (text, px) => { ctx.font = px + 'px system-ui, sans-serif'; return ctx.measureText(text).width; };
   }
+  const measureText = measureFactory();
 
   function hiDpiCanvas() {
     const ratio = (window.devicePixelRatio || 1);
@@ -66,100 +71,80 @@
     return c;
   }
 
-  // Seeded RNG for stability
   function seededRandom(seed) {
     let s = seed >>> 0;
-    return function() {
-      // xorshift32
-      s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
-      return ((s >>> 0) / 4294967296);
-    };
+    return function() { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; return ((s>>>0)/4294967296); };
   }
 
-  function relaxPositions(nextPos, sizePx) {
-    const keys = Array.from(nextPos.keys());
-    const nodes = keys.map(k => {
-      const p = nextPos.get(k);
-      const textLen = Math.max(6, k.length);
-      return {
-        key:k, x:p.x, y:p.y, rotate:p.rotate||0, size:p.size,
-        w: Math.max(40, textLen * sizePx * 0.62) + 12,
-        h: sizePx * 1.7 + 12
-      };
+  function relaxWithQuadtree(nextPos, sizePx){
+    const nodes = Array.from(nextPos.entries()).map(([k,p]) => {
+      const w = Math.max(40, measureText(k, sizePx) + 12);
+      const h = sizePx * 1.5 + 8;
+      return {key:k, x:p.x, y:p.y, w, h, rotate:p.rotate||0, size:p.size};
     });
 
-    const passes = 5;
-    const pushX = 3, pushY = 10;
-    const minRowGap = 8;
-
-    for (let p=0; p<passes; p++) {
-      for (let i=0; i<nodes.length; i++) {
-        for (let j=i+1; j<nodes.length; j++) {
-          const a = nodes[i], b = nodes[j];
-          const overlapX = Math.abs(a.x-b.x) < (a.w+b.w)/2;
-          const overlapY = Math.abs(a.y-b.y) < (a.h+b.h)/2;
-          if (overlapX && overlapY) {
-            const sign = (a.y <= b.y) ? -1 : 1;
-            a.y += sign * pushY;
-            b.y -= sign * pushY;
-            const hSign = (a.x <= b.x) ? -1 : 1;
-            a.x += hSign * pushX;
-            b.x -= hSign * pushX;
-          } else if (overlapX && !overlapY) {
-            const dy = Math.abs(a.y - b.y);
-            if (dy < minRowGap) {
-              const sgn = (a.y < b.y) ? -1 : 1;
-              a.y += sgn * (minRowGap - dy)/2;
-              b.y -= sgn * (minRowGap - dy)/2;
-            }
+    const passes = 8;
+    for (let pass=0; pass<passes; pass++){
+      const qt = d3.quadtree().x(d=>d.x).y(d=>d.y).addAll(nodes);
+      nodes.forEach(n => {
+        const r = Math.max(n.w, n.h);
+        qt.visit((node, x0, y0, x1, y1) => {
+          if (!node.data) return (x0 > n.x + r || x1 < n.x - r || y0 > n.y + r || y1 < n.y - r);
+          const m = node.data;
+          if (m === n) return false;
+          const overlapX = Math.abs(n.x - m.x) < (n.w + m.w)/2;
+          const overlapY = Math.abs(n.y - m.y) < (n.h + m.h)/2;
+          if (overlapX && overlapY){
+            // push apart minimally; slight preference vertical but keep density
+            const dx = (n.x - m.x) || (Math.random()-0.5);
+            const dy = (n.y - m.y) || (Math.random()-0.5);
+            const push = 4;
+            n.x += (dx / (Math.abs(dx)+Math.abs(dy))) * push;
+            n.y += (dy / (Math.abs(dx)+Math.abs(dy))) * push;
+            m.x -= (dx / (Math.abs(dx)+Math.abs(dy))) * push;
+            m.y -= (dy / (Math.abs(dx)+Math.abs(dy))) * push;
           }
-          a.x = Math.max(a.w/2, Math.min(W - a.w/2, a.x));
-          a.y = Math.max(a.h/2, Math.min(H - a.h/2, a.y));
-          b.x = Math.max(b.w/2, Math.min(W - b.w/2, b.x));
-          b.y = Math.max(b.h/2, Math.min(H - b.h/2, b.y));
-        }
-      }
+          return false;
+        });
+        // clamp
+        n.x = Math.max(n.w/2, Math.min(W - n.w/2, n.x));
+        n.y = Math.max(n.h/2, Math.min(H - n.h/2, n.y));
+      });
     }
-
-    nodes.forEach(n => nextPos.set(n.key, { x:n.x, y:n.y, rotate:n.rotate, size:n.size }));
+    nodes.forEach(n => nextPos.set(n.key, {x:n.x, y:n.y, rotate:n.rotate, size:n.size}));
     return nextPos;
   }
 
-  function scheduleRedraw(){
-    if (inFlight){ pending = true; return; }
-    redrawAdaptive();
-  }
+  function scheduleRedraw(){ if (inFlight){ pending = true; return; } redrawAdaptive(); }
 
   function redrawAdaptive(){
-    const donors = load().slice().sort((a,b)=> a.name.localeCompare(b.name, undefined, {sensitivity:'base'}));
+    const donors0 = load().slice().sort((a,b)=> a.name.localeCompare(b.name, undefined, {sensitivity:'base'}));
+    const donors = donors0.slice(0, MAX_CAP);
     const total = donors.length;
-    console.log('[DonorBoard] total donors:', total);
+    console.log('[DonorBoard] total donors (capped):', total);
 
-    // Remove emphasized flags for names that no longer exist
+    // prune emphasized names no longer present
     let changed = false;
-    emphasized.forEach(k => {
-      if (!donors.find(d => k === (d.name.normalize('NFKC').replace(/\s+/g,' ').trim()).toLowerCase())) {
-        emphasized.delete(k); changed = true;
-      }
-    });
+    emphasized.forEach(k => { if (!donors.find(d => keyName(d.name) === k)) { emphasized.delete(k); changed = true; } });
     if (changed) saveEmph(emphasized);
 
-    // Base font size and adaptive trials
-    const base = (total <= 50) ? cssBase() : cssBase() * Math.max(0.58, 1 - 0.42 * ((total - 50) / 200));
+    // adaptive parameters
+    const base = (total <= 50) ? cssBase() : cssBase() * Math.max(0.6, 1 - 0.4 * ((total - 50) / 200));
     const tries = [
       {scale:1.00, pad:1.00},
-      {scale:0.92, pad:0.95},
-      {scale:0.85, pad:0.9},
-      {scale:0.78, pad:0.85},
-      {scale:0.72, pad:0.80},
-      {scale:0.66, pad:0.78},
+      {scale:0.94, pad:0.95},
+      {scale:0.88, pad:0.90},
+      {scale:0.82, pad:0.86},
+      {scale:0.76, pad:0.82},
+      {scale:0.70, pad:0.78},
     ];
+    const accept = (bias==='larger') ? 0.80 : (bias==='denser' ? 0.97 : 0.95);
 
     const CENTERX = W/2, CENTERY = H/2;
     let attemptIndex = 0;
     inFlight = true;
 
-    const seed = 123456 ^ total ^ Math.floor(W) ^ Math.floor(H); // stable per geometry & count
+    const seed = 123456 ^ total ^ Math.floor(W) ^ Math.floor(H);
     const rng = seededRandom(seed);
 
     (function attempt(){
@@ -168,13 +153,12 @@
       const fontPx = base * t.scale;
       const padScale = t.pad;
 
-      const words = donors.map(d => ({ text: d.name, key: (d.name.normalize('NFKC').replace(/\s+/g,' ').trim()).toLowerCase(), size: fontPx }));
-
+      const words = donors.map(d => ({ text: d.name, key: keyName(d.name), size: fontPx }));
       const cloud = d3.layout.cloud()
         .canvas(hiDpiCanvas)
         .size([W, H])
         .words(words)
-        .padding(d => dynamicPadding(d, padScale))
+        .padding(d => Math.round((Math.max(8, fontPx*0.3) + Math.min(24, d.text.length*0.5)) * padScale))
         .font('system-ui, sans-serif')
         .fontSize(d => d.size)
         .spiral('rectangular')
@@ -182,20 +166,18 @@
         .rotate(() => 0)
         .on('end', placed => {
           console.log('[DonorBoard] attempt', attemptIndex, 'fontPx', fontPx.toFixed(1), 'padScale', padScale, 'placed', placed.length);
-          const need = Math.min(total, 400); // cap for perf/legibility
-          if (placed.length < Math.min(need, Math.floor(total * 0.85)) && attemptIndex < tries.length) {
-            attempt(); // try smaller
-            return;
-          }
+          const ratio = placed.length / (total || 1);
+          if (ratio < accept && attemptIndex < tries.length) { attempt(); return; }
 
           let nextPos = new Map();
           placed.forEach(d => nextPos.set(d.key, { x: d.x + CENTERX, y: d.y + CENTERY, rotate: d.rotate || 0, size: d.size }));
-          nextPos = relaxPositions(nextPos, fontPx);
+
+          nextPos = relaxWithQuadtree(nextPos, fontPx);
 
           const layer = svg.selectAll('g.words').data([null]).join('g').attr('class','words');
           const sel = layer.selectAll('text.word').data(placed, d => d.key);
 
-          sel.exit().transition().duration(200).style('opacity', 0).remove();
+          sel.exit().transition().duration(150).style('opacity', 0).remove();
 
           const enter = sel.enter().append('text')
             .attr('class', 'word')
@@ -209,7 +191,7 @@
 
           enter.merge(sel)
             .classed('emph', d => emphasized.has(d.key))
-            .transition().duration(450)
+            .transition().duration(360)
             .style('opacity', 1)
             .attr('font-size', d => d.size)
             .attr('transform', d => {
@@ -245,7 +227,7 @@
     else if (msg.type === 'reset') {
       svg.selectAll('*').remove();
       prevPos.clear();
-      emphasized.clear(); saveEmph(emphasized); // also clear emphasize on resets
+      emphasized.clear(); saveEmph(emphasized);
       scheduleRedraw();
     }
     else if (msg.type === 'clearEmph') { emphasized.clear(); saveEmph(emphasized); scheduleRedraw(); }
