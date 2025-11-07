@@ -3,112 +3,43 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Donor Board – Display</title>
+<title>Donor Board – Display (d3-cloud)</title>
 <link rel="icon" href="assets/favicon.svg">
+<script src="https://unpkg.com/d3@7"></script>
+<script src="https://unpkg.com/d3-cloud/build/d3.layout.cloud.js"></script>
 <style>
   :root {
-    --base-size: clamp(18px, 2.2vw, 36px); /* final equal size for names */
-    --gap: 18px;
-    --in-duration: 3800ms; /* pop-in time */
+    --base-size: clamp(18px, 2.2vw, 36px); /* uniform final size */
+    --in-scale: 2.1;                       /* pop-in scale */
+    --gap: 12px;
   }
-
-  html, body {
-    height:100%;
-    margin:0;
-    background:#fafafa;
-    color:#111;
-    font-family: system-ui, sans-serif;
-    overflow:hidden; /* keeps the composition tidy */
+  html, body { height:100%; margin:0; background:#fafafa; color:#111; font-family: system-ui, sans-serif; overflow:hidden; }
+  header { padding:16px 20px 8px; font-weight:600; letter-spacing:.5px; }
+  #stage { position: relative; width: 100vw; height: calc(100vh - 48px); }
+  svg { width:100%; height:100%; display:block; }
+  .word { font-size: var(--base-size); fill:#111; dominant-baseline: middle; text-anchor: middle; }
+  .word.new { transform-origin: center center; transform-box: fill-box; animation: pop 3.6s ease-out both; }
+  @keyframes pop {
+    0% { transform: scale(var(--in-scale)); opacity: 0; }
+    10% { opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
   }
-
-  .wrap {
-    height:100%;
-    display:flex;
-    flex-direction:column;
+  /* 300x300 centerpiece placeholder, above the SVG but click-through */
+  #centerpiece {
+    position:absolute; left:50%; top:50%;
+    width:300px; height:300px; margin-left:-150px; margin-top:-150px;
+    display:grid; place-items:center;
+    pointer-events:none;
   }
-
-  header {
-    padding:18px 20px 8px;
-    font-weight:600;
-    letter-spacing:.5px;
-  }
-
-  /* FLEX cloud, centered BOTH axes, wraps around a fixed 300x300 flex item */
-  #cloud {
-    position:relative;
-    height:100%;
-    display:flex;
-    flex-wrap:wrap;
-    gap: var(--gap);
-    padding: 14px 20px 32px;
-    justify-content: center;   /* horizontal centering of each row */
-    align-content: center;     /* vertical centering of the whole wrapped block */
-  }
-
-  /* The central 300x300 placeholder (flex item) that the names wrap around */
-  .centerpiece {
-    flex: 0 0 300px;
-    height: 300px;
-    display:grid;
-    place-items:center;
-    border: 2px dashed #ddd;   /* visible placeholder frame */
-    border-radius: 12px;
-    background: #fff;
-    box-shadow: 0 2px 10px rgba(0,0,0,.04) inset;
-    order: 0;                  /* ensure it sits before the names in flow */
-  }
-  .centerpiece img {
-    width: 300px;
-    height: 300px;
-    object-fit: contain;
-    border-radius: 8px;
-    display:block;
-  }
-
-  /* Names */
-  .name {
-    font-size: var(--base-size);
-    line-height: 1;
-    white-space: nowrap;
-    will-change: transform, opacity;
-    transform-origin: center center;
-    user-select:none;
-    order: 1; /* appear around/after the centerpiece in flow */
-  }
-
-  /* pop in larger then settle to equal size */
-  .pop {
-    animation: popin var(--in-duration) ease-out both; /* both = apply styles before & after */
-  }
-  @keyframes popin {
-    0%   { transform: scale(2) rotate(var(--rot, 0deg)); opacity: 0; }
-    8%   { opacity: 1; }
-    100% { transform: scale(1) rotate(var(--rot, 0deg)); opacity: 1; }
-  }
-
-  /* optional gentle drift after pop finishes */
-  .floaty {
-    animation: floaty 16s ease-in-out infinite alternate;
-  }
-  @keyframes floaty {
-    from { transform: translateY(-2px) rotate(var(--rot, 0deg)); }
-    to   { transform: translateY(2px)  rotate(var(--rot, 0deg)); }
-  }
+  #centerpiece img { width:300px; height:300px; object-fit:contain; border-radius:10px; }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>Thank you to our generous donors</header>
-
-  <div id="cloud" aria-live="polite">
-    <!-- Centerpiece sits in the middle; replace src with your 300x300 image when ready -->
-    <div class="centerpiece" id="centerpiece">
-      <img
-        id="centerImage"
-        alt="Centerpiece 300×300"
-        src="data:image/svg+xml;utf8,<?xml version='1.0' encoding='UTF-8'?><svg xmlns='http://www.w3.org/2000/svg' width='300' height='300' viewBox='0 0 300 300'><rect width='300' height='300' fill='%23f5f5f5'/><rect x='1.5' y='1.5' width='297' height='297' fill='none' stroke='%23cccccc' stroke-width='3' stroke-dasharray='10 8'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-family='system-ui, sans-serif' font-size='18' fill='%23999'>300×300 Placeholder</text></svg>"
-      />
-    </div>
+<header>Thank you to our generous donors</header>
+<div id="stage">
+  <svg id="cloud" aria-label="Donor word cloud"></svg>
+  <div id="centerpiece">
+    <img id="centerImage" alt="Centerpiece 300×300" src="data:image/svg+xml;utf8,<?xml version='1.0' encoding='UTF-8'?><svg xmlns='http://www.w3.org/2000/svg' width='300' height='300' viewBox='0 0 300 300'><rect width='300' height='300' fill='%23f5f5f5'/><rect x='1.5' y='1.5' width='297' height='297' fill='none' stroke='%23cccccc' stroke-width='3' stroke-dasharray='10 8'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-family='system-ui, sans-serif' font-size='18' fill='%23999'>300×300 Placeholder</text></svg>" />
   </div>
 </div>
 
@@ -116,110 +47,147 @@
 (() => {
   const KEY = 'donorList.v1';
   const CH = new BroadcastChannel('donors');
-  const cloud = document.getElementById('cloud');
-  const centerpiece = document.getElementById('centerpiece');
-  const present = new Map();
+  const svg = d3.select('#cloud');
+  const stage = document.getElementById('stage');
+  let W = stage.clientWidth, H = stage.clientHeight;
+  const CENTER = { x: W/2, y: H/2 };
+  const CENTER_RECT = { x: CENTER.x - 150, y: CENTER.y - 150, w: 300, h: 300 };
+
+  const present = new Map(); // nameKey -> true
 
   function load() {
     try { return JSON.parse(localStorage.getItem(KEY)) || []; }
     catch { return []; }
   }
-
   const normalizeName = s => s.normalize('NFKC').replace(/\s+/g,' ').trim();
   const keyName = s => normalizeName(s).toLowerCase();
 
-  function randomSmallRotation() {
-    const degrees = (Math.random() * 6 - 3).toFixed(2); // -3..+3
-    return degrees + 'deg';
+  function resize(){
+    W = stage.clientWidth; H = stage.clientHeight;
+    svg.attr('viewBox', `0 0 ${W} ${H}`);
+  }
+  window.addEventListener('resize', () => { resize(); layout(); });
+
+  function inCenter(x, y, w, h) {
+    const r = CENTER_RECT;
+    return !(x + w/2 < r.x || x - w/2 > r.x + r.w || y + h/2 < r.y || y - h/2 > r.y + r.h) ;
   }
 
-  function makeNode(name, shouldPop=true) {
-    const span = document.createElement('span');
-    span.className = 'name';
-    span.textContent = name;
-    span.style.setProperty('--rot', randomSmallRotation());
+  function nudgeOutOfCenter(word) {
+    // push any word whose bbox overlaps the center rect outward along its vector from center
+    const r = CENTER_RECT;
+    const dirX = word.x - CENTER.x;
+    const dirY = word.y - CENTER.y;
+    const len = Math.max(1, Math.hypot(dirX, dirY));
+    const ux = dirX / len, uy = dirY / len;
+    let x = word.x, y = word.y;
+    const halfW = word.width/2, halfH = word.height/2;
 
-    // Force-start the pop animation reliably in all browsers
-    if (shouldPop) {
-      // ensure initial styles are applied, then add the class on the next frame
-      requestAnimationFrame(() => {
-        // tick to guarantee reflow before adding class (fixes “not animating in”)
-        void span.offsetWidth; 
-        span.classList.add('pop');
-        // after animation ends, add floaty drift
-        setTimeout(() => span.classList.add('floaty'), 4200);
-      });
-    } else {
-      // initial (non-pop) nodes can still drift
-      setTimeout(() => span.classList.add('floaty'), 1200);
+    let safety = 0;
+    while (inCenter(x, y, word.width, word.height) && safety < 600) {
+      x += ux * 6; y += uy * 6;
+      safety++;
     }
-    return span;
+    word.x = x; word.y = y;
+  }
+
+  function layout(newNameSet = new Set()) {
+    const list = load();
+    const names = list.map(d => d.name);
+    // Use equal sizes so the end state is uniform
+    const baseSizePx = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--base-size')) || 28;
+
+    // Build words array for d3-cloud
+    const words = names.map(n => ({ text: n, size: baseSizePx }));
+
+    // d3-cloud layout
+    const cloud = d3.layout.cloud()
+      .size([W, H])
+      .words(words)
+      .padding(4)
+      .font('system-ui, sans-serif')
+      .fontSize(d => d.size)
+      .rotate(() => 0) // keep level for readability
+      .spiral('archimedean')
+      .on('end', draw);
+
+    cloud.start();
+
+    function draw(wds) {
+      // Estimate text bbox width/height for centering logic (approx via canvas-measured by d3-cloud: d.x,d.y are centers)
+      // d3-cloud gives: x, y (center), and has sprite/bbox dims via d.width/d.height if built with canvas sprite.
+      // Some builds expose width/height; if not, approximate with size * char count factor.
+      wds.forEach(d => {
+        if (!('width' in d) || !('height' in d)) {
+          const approxW = d.text.length * d.size * 0.6;
+          const approxH = d.size * 1.2;
+          d.width = approxW; d.height = approxH;
+        }
+        // Avoid the center 300x300 by nudging
+        if (inCenter(d.x, d.y, d.width, d.height)) nudgeOutOfCenter(d);
+      });
+
+      // DATA JOIN
+      const g = svg.selectAll('g.words').data([null]);
+      g.enter().append('g').attr('class','words');
+      const layer = svg.select('g.words');
+
+      const sel = layer.selectAll('text.word').data(wds, d => d.text);
+
+      // EXIT
+      sel.exit().remove();
+
+      // ENTER
+      const enter = sel.enter().append('text')
+        .attr('class', d => 'word' + (newNameSet.has(keyName(d.text)) ? ' new' : ''))
+        .style('font-family', 'system-ui, sans-serif')
+        .text(d => d.text)
+        .attr('text-anchor', 'middle')
+        .attr('dominant-baseline', 'middle')
+        .attr('transform', d => `translate(${CENTER.x},${CENTER.y})`)
+        .style('opacity', 0);
+
+      // ENTER + UPDATE
+      enter.merge(sel)
+        .transition()
+        .duration(1200)
+        .attr('transform', d => `translate(${d.x + W/2},${d.y + H/2})`)
+        .style('opacity', 1);
+    }
   }
 
   function fullRender() {
-    // Clear everything except the centerpiece
-    [...cloud.children].forEach(node => { if (node !== centerpiece) node.remove();});
+    resize();
     present.clear();
-
     const list = load();
-    // Keep it tidy: alpha sort then lightly shuffle for variety
-    list.sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}));
-    const shuffled = shuffle(list);
-    for (const d of shuffled) {
-      const node = makeNode(d.name, /*pop*/ false);
-      cloud.appendChild(node);
-      present.set(keyName(d.name), true);
-    }
-  }
-
-  function shuffle(arr) {
-    const a = arr.slice();
-    for (let i=a.length-1; i>0; i--) {
-      const j = Math.floor(Math.random()*(i+1));
-      [a[i], a[j]] = [a[j], a[i]];
-    }
-    return a;
+    for (const d of list) present.set(keyName(d.name), true);
+    layout(); // no special "new" animations on initial load
   }
 
   function addNew(donors) {
-    // Insert new names near the center for a “populate around the middle” effect.
-    // We'll insert just AFTER the centerpiece so they appear close to the center area.
-    const insertIndex = Array.prototype.indexOf.call(cloud.children, centerpiece) + 1;
-
-    for (const d of donors) {
-      const k = keyName(d.name);
-      if (!present.has(k)) {
-        const node = makeNode(d.name, /*shouldPop*/ true);
-        const refChild = cloud.children[insertIndex] || null;
-        cloud.insertBefore(node, refChild);
-        present.set(k, true);
-      }
-    }
+    const newSet = new Set(donors.map(d => keyName(d.name)));
+    // Re-layout using the "new" set so those nodes get the .new class (pop animation)
+    layout(newSet);
+    // track present
+    donors.forEach(d => present.set(keyName(d.name), true));
   }
 
+  // BroadcastChannel listeners
   CH.onmessage = (ev) => {
     const msg = ev.data || {};
-    if (msg.type === 'added' && Array.isArray(msg.donors)) {
-      addNew(msg.donors);
-    } else if (msg.type === 'reset') {
-      fullRender();
-    }
+    if (msg.type === 'added' && Array.isArray(msg.donors)) addNew(msg.donors);
+    else if (msg.type === 'reset') fullRender();
   };
 
-  window.addEventListener('storage', (e) => {
-    if (e.key === KEY) fullRender();
-  });
+  window.addEventListener('storage', (e) => { if (e.key === KEY) fullRender(); });
 
-  // Initial load
+  // Initial render
   fullRender();
 
-  // Optional: replace the center image by adding ?img=URL to the page URL
+  // Optional ?img= URL parameter
   const params = new URLSearchParams(location.search);
   const img = params.get('img');
-  if (img) {
-    const imgEl = document.getElementById('centerImage');
-    imgEl.src = img;
-  }
+  if (img) document.getElementById('centerImage').src = img;
 })();
 </script>
 </body>

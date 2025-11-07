@@ -44,8 +44,8 @@ The Morales Family"></textarea>
   function renderChips(){
     const list=load();
     $('#count').textContent=list.length;
-    $('#chips').innerHTML=list.sort((a,b)=>a.name.localeCompare(b.name))
-      .map(d=>`<span class="pill">${d.name}</span>`).join('');
+    $('#chips').innerHTML=list.sort((a,b)=>a.name.localeCompare(b.name, undefined, {sensitivity:'base'}))
+      .map(d=>`<span class="pill" title="${new Date(d.addedAt).toLocaleString()}">${d.name}</span>`).join('');
   }
   function addFromInput(){
     const raw=$('#nameInput').value;
@@ -64,11 +64,12 @@ The Morales Family"></textarea>
     }
     if(newOnes.length){save(list);CH.postMessage({type:'added',donors:newOnes});renderChips();}
     $('#nameInput').value='';
+    $('#nameInput').focus();
   }
   function clearAll(){if(!confirm('Clear all donors?'))return;save([]);CH.postMessage({type:'reset'});renderChips();}
   $('#addNames').onclick=addFromInput;
   $('#clearAll').onclick=clearAll;
-  $('#openDisplay').onclick=()=>window.open('display.html','DonorDisplay');
+  $('#openDisplay').onclick=()=>window.open('display.html','DonorDisplay','noopener,noreferrer');
   window.addEventListener('storage',e=>{if(e.key===KEY)renderChips();});
   renderChips();
 })();
