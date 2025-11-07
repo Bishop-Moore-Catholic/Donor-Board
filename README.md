@@ -1,20 +1,16 @@
-# Donor Board (Better padding + chip actions)
+# Donor Board (Admin SyntaxError fix + better parsing)
 
-## New
-- **D3-cloud dynamic padding**: uses a padding function based on font size and name length to reduce overlaps.
-- **Chip hover actions**: hover any chip in `admin.html` to reveal two buttons:
-  - ⭐ Emphasize — pulses the name once on the display.
-  - 🗑️ Delete — removes the donor and updates the display.
+**Fixes**
+- Removed problematic template/escape usage in `admin.html` (now DOM-builds chips).
+- Robust delimiter parsing using `new RegExp('[,\t\r\n]+','g')`.
+- Persistent event delegation for chip actions (no `{ once:true }` pitfall).
 
-## Use
-- Serve locally:
-  ```bash
-  python3 -m http.server 5500
-  # http://localhost:5500/admin.html
-  # http://localhost:5500/display.html
-  ```
-- Deploy on GitHub Pages (root of repo).
+**Display**
+- Same d3-cloud streaming + padded layout as previous package.
 
-## Notes
-- Tweak the padding by editing `dynamicPadding()` in `display.html`.
-- Emphasize reorders SVG to top (bring-to-front) and scales then returns to stored position.
+## Run locally
+```bash
+python3 -m http.server 5500
+# http://localhost:5500/admin.html
+# http://localhost:5500/display.html
+```
