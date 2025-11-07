@@ -51,25 +51,83 @@
     return ordered.map(d => ({ text: d.name, size: baseSizePx }));
   }
 
-  function drawLayout() {
-    const words = getWords();
-    const cloud = d3.layout.cloud()
-      .size([W, H])
-      .words(words)
-      .padding(4)
-      .font('system-ui, sans-serif')
-      .fontSize(d => d.size)
-      .rotate(() => 0)
-      .spiral('archimedean')
-      .on('end', draw);
+  let layoutToken = 0;
 
-    cloud.start();
+  function drawLayout() {
+    const baseWords = getWords();
+    const token = ++layoutToken;
+
+    if (!baseWords.length) {
+      svg.selectAll('*').remove();
+      return;
+    }
+
+    const PAD = 4;
+    const MIN_SIZE = 12;
+    const MAX_ATTEMPTS = 8;
+    let attempt = 0;
+    let scale = 1;
+
+    function runLayout() {
+      const words = baseWords.map(d => ({
+        text: d.text,
+        size: Math.max(MIN_SIZE, d.size * scale)
+      }));
+
+      const cloud = d3.layout.cloud()
+        .size([W, H])
+        .words(words)
+        .padding(PAD)
+        .font('system-ui, sans-serif')
+        .fontSize(d => d.size)
+        .rotate(() => 0)
+        .spiral('archimedean')
+        .on('end', positioned => {
+          if (token !== layoutToken) return; // stale run
+
+          if (!positioned.length) {
+            svg.selectAll('*').remove();
+            return;
+          }
+
+          const minX = d3.min(positioned, d => d.x - d.width / 2) ?? 0;
+          const maxX = d3.max(positioned, d => d.x + d.width / 2) ?? 0;
+          const minY = d3.min(positioned, d => d.y - d.height / 2) ?? 0;
+          const maxY = d3.max(positioned, d => d.y + d.height / 2) ?? 0;
+
+          const boundsWidth = maxX - minX + PAD * 2;
+          const boundsHeight = maxY - minY + PAD * 2;
+
+          const fits = boundsWidth <= W && boundsHeight <= H;
+
+          if (!fits && attempt < MAX_ATTEMPTS) {
+            const shrinkX = W / boundsWidth;
+            const shrinkY = H / boundsHeight;
+            const shrink = Math.max(0.5, Math.min(shrinkX, shrinkY) * 0.95);
+            if (shrink < 1) {
+              scale *= shrink;
+            } else {
+              scale *= 0.9;
+            }
+            attempt++;
+            runLayout();
+            return;
+          }
+
+          draw(positioned);
+        });
+
+      cloud.start();
+    }
+
+    runLayout();
 
     function draw(wds) {
-      const CENTERX = W/2, CENTERY = H/2;
+      const CENTERX = W / 2;
+      const CENTERY = H / 2;
 
       const g = svg.selectAll('g.words').data([null]);
-      g.enter().append('g').attr('class','words');
+      g.enter().append('g').attr('class', 'words');
       const layer = svg.select('g.words');
 
       const sel = layer.selectAll('text.word').data(wds, d => d.text);
