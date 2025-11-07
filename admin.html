@@ -53,7 +53,7 @@ The Morales Family"></textarea>
     const list = load();
     $('#count').textContent = list.length;
     $('#chips').innerHTML = list
-      .sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}))
+      .sort((a,b) => a.addedAt - b.addedAt || a.name.localeCompare(b.name, undefined, {sensitivity:'base'}))
       .map(d => `<span class="pill" title="${new Date(d.addedAt).toLocaleString()}">${d.name}</span>`).join('');
   }
 
@@ -89,7 +89,6 @@ The Morales Family"></textarea>
   function clearAll() {
     if (!confirm('Clear all donors? This will immediately update the display.')) return;
     save([]);
-    localStorage.removeItem('donorPositions.v1'); // clear positions cache on reset
     CH.postMessage({ type:'reset' });
     renderChips();
   }
