@@ -12,8 +12,8 @@
     <h1 style="margin:0 0 12px;">Donor Board – Admin</h1>
 
     <div class="row" style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-      <button id="openDisplay">Open Display Page</button>
-      <button id="clearAll" title="Remove all donors (affects display)">Clear All</button>
+      <button id="openDisplay" type="button">Open Display Page</button>
+      <button id="clearAll" type="button" title="Remove all donors (affects display)">Clear All</button>
       <span style="color:#666; font-size:13px;">Paste names (newline, comma, or tab-separated). Add '+' anywhere in a name to auto‑emphasize it. Duplicates are ignored.</span>
     </div>
 
@@ -22,7 +22,7 @@
 Jane Smith\tJohn D. Brown+, Alicia +Cruz
 The +Morales Family"></textarea>
     <p class="row" style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-      <button class="primary" id="addNames">Add Names</button>
+      <button class="primary" id="addNames" type="button">Add Names</button>
     </p>
 
     <div class="admin-chips">
@@ -30,7 +30,7 @@ The +Morales Family"></textarea>
       <div id="chips"></div>
     </div>
 
-    <!-- THEME PANEL (ADMIN) -->
+    <!-- THEME PANEL (Admin pushes to Display) -->
     <div class="theme-panel" id="themePanel">
       <h3>Display Theme (push to display)</h3>
       <div class="theme-grid">
@@ -52,8 +52,8 @@ The +Morales Family"></textarea>
         <div class="theme-row"><label>Background image</label><input type="file" id="bgImage" accept="image/*"></div>
       </div>
       <div class="theme-actions">
-        <button id="resetTheme">Reset</button>
-        <button id="pushTheme">Apply & Push</button>
+        <button id="resetTheme" type="button">Reset</button>
+        <button id="pushTheme" type="button">Apply & Push</button>
       </div>
     </div>
   </div>
@@ -66,6 +66,8 @@ The +Morales Family"></textarea>
   const CH = new BroadcastChannel('donors');
 
   const $ = sel => document.querySelector(sel);
+  const chipsEl = $('#chips');
+
   const normalizeName = s => s.normalize('NFKC').replace(/\s+/g,' ').trim();
   const keyName = s => normalizeName(s).toLowerCase();
   const load = () => JSON.parse(localStorage.getItem(KEY) || '[]');
@@ -92,23 +94,36 @@ The +Morales Family"></textarea>
 
   function makeChip(d){
     const chip = document.createElement('div');
-    const emphSet = loadEmph();
-    const isEmph = emphSet.has(keyName(d.name));
-    chip.className = 'chip' + (isEmph ? ' emph' : '');
+    chip.className = 'chip';
     chip.dataset.name = d.name;
     chip.title = new Date(d.addedAt).toLocaleString();
-    const label = document.createElement('span'); label.className = 'label'; label.textContent = d.name;
-    chip.appendChild(label);
-    if (isEmph) { const b = document.createElement('div'); b.className = 'badge'; b.textContent = '★'; chip.appendChild(b); }
 
+    const label = document.createElement('span');
+    label.className = 'label'; label.textContent = d.name;
+    chip.appendChild(label);
+
+    const emphSet = loadEmph();
+    const isEmph = emphSet.has(keyName(d.name));
+    if (isEmph) chip.classList.add('emph');
+    if (isEmph) {
+      const b = document.createElement('div'); b.className = 'badge'; b.textContent = '★'; chip.appendChild(b);
+    }
+
+    // Dedicated handle to open menu
+    const handle = document.createElement('button');
+    handle.className = 'handle'; handle.type = 'button'; handle.setAttribute('aria-label', 'Open actions'); handle.innerHTML = '&#8942;';
+    chip.appendChild(handle);
+
+    // Menu
     const menu = document.createElement('div'); menu.className = 'menu';
     const emph = document.createElement('button');
-    emph.className = 'action-btn'; emph.setAttribute('data-act','emph'); emph.title = isEmph ? 'Un‑emphasize' : 'Emphasize';
+    emph.className = 'action-btn'; emph.type = 'button'; emph.setAttribute('data-act','emph'); emph.title = isEmph ? 'Un‑emphasize' : 'Emphasize';
     emph.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M12 3l2.4 4.86 5.37.78-3.88 3.78.92 5.36L12 15.9 7.19 17.78l.92-5.36L4.23 8.64l5.37-.78L12 3z"/></svg>';
     const del = document.createElement('button');
-    del.className = 'action-btn'; del.setAttribute('data-act','del'); del.title = 'Delete';
+    del.className = 'action-btn'; del.type = 'button'; del.setAttribute('data-act','del'); del.title = 'Delete';
     del.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M3 6h18M9 6V4h6v2M8 6l1 14h6l1-14"/></svg>';
     menu.appendChild(emph); menu.appendChild(del); chip.appendChild(menu);
+
     return chip;
   }
 
@@ -116,8 +131,9 @@ The +Morales Family"></textarea>
     const list = load();
     document.getElementById('count').textContent = list.length;
     const frag = document.createDocumentFragment();
-    list.sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'})).forEach(d => frag.appendChild(makeChip(d)));
-    document.getElementById('chips').innerHTML = ''; document.getElementById('chips').appendChild(frag);
+    list.sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}))
+        .forEach(d => frag.appendChild(makeChip(d)));
+    chipsEl.innerHTML = ''; chipsEl.appendChild(frag);
   }
 
   function splitDonorText(raw) { return raw.split(new RegExp('[,\t\r\n]+','g')); }
@@ -148,8 +164,8 @@ The +Morales Family"></textarea>
     }
 
     if (newOnes.length) {
-      save(list);
-      saveEmph(emphSet);
+      localStorage.setItem(KEY, JSON.stringify(list));
+      localStorage.setItem(EMPH_KEY, JSON.stringify(Array.from(emphSet)));
       CH.postMessage({ type:'added', donors: newOnes });
       for (const rec of newOnes) {
         const k = keyName(rec.name);
@@ -171,7 +187,39 @@ The +Morales Family"></textarea>
     renderChips();
   }
 
-  // ---------- THEME (Admin pushes to Display) ----------
+  // Event delegation for chips container
+  chipsEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+
+    if (btn && btn.classList.contains('handle')) {
+      // open/close this chip's menu; close others
+      document.querySelectorAll('.chip.menu-open').forEach(el => { if (el !== chip) el.classList.remove('menu-open'); });
+      chip.classList.toggle('menu-open');
+      console.log('[chips] toggle menu for', chip.dataset.name, chip.classList.contains('menu-open'));
+      return;
+    }
+
+    if (btn && btn.classList.contains('action-btn')) {
+      const act = btn.getAttribute('data-act');
+      const name = chip.dataset.name;
+      console.log('[chips] action', act, 'for', name);
+      if (act === 'emph') toggleEmphasize(name);
+      if (act === 'del') deleteName(name);
+      chip.classList.remove('menu-open');
+      return;
+    }
+  });
+
+  // Click outside to close any open menus
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.chip')) {
+      document.querySelectorAll('.chip.menu-open').forEach(el => el.classList.remove('menu-open'));
+    }
+  });
+
+  // THEME PUSH (same as previous build)
   const gcs = getComputedStyle(document.documentElement);
   const defaults = {
     bg: gcs.getPropertyValue('--bg').trim() || '#f7f7f7',
@@ -223,27 +271,25 @@ The +Morales Family"></textarea>
         const cur = loadTheme(); if (cur && cur.bgImageData) theme.bgImageData = cur.bgImageData;
       }
       saveTheme(theme);
-      // Push to display
       CH.postMessage({ type: 'themeUpdate', theme });
-      alert('Theme pushed to display.');
+      console.log('[theme] pushed', theme);
     });
 
     document.getElementById('resetTheme').addEventListener('click', () => {
       localStorage.removeItem(THEME_KEY);
       CH.postMessage({ type: 'themeUpdate', theme: defaults });
-      alert('Theme reset to defaults and pushed.');
-      // Reset inputs
+      console.log('[theme] reset to defaults');
       bg.value = toHex(defaults.bg); tcol.value = toHex(defaults.titleColor);
       ncol.value = toHex(defaults.nameColor); ecol.value = toHex(defaults.emphColor);
       nwt.value = String(defaults.nameWeight); ewt.value = String(defaults.emphWeight); esc.value = String(defaults.emphScale);
       bgi.value='';
     });
 
-    // On load, push current saved theme once so display can sync quickly if opened later
+    // Push once on load to sync display if needed
     if (saved) CH.postMessage({ type: 'themeUpdate', theme: saved });
   }
 
-  // ---------- Wire events ----------
+  // Wire basics
   document.getElementById('addNames').addEventListener('click', addFromInput);
   document.getElementById('clearAll').addEventListener('click', clearAll);
   document.getElementById('openDisplay').addEventListener('click', () => window.open('display.html', 'DonorDisplay', 'noopener,noreferrer'));

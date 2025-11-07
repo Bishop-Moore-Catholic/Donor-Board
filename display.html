@@ -23,7 +23,6 @@
   const stage = document.getElementById('stage');
   let W = stage.clientWidth, H = stage.clientHeight;
 
-  // Apply theme helpers (same as earlier display build)
   const rootStyle = document.documentElement.style;
   function applyTheme(theme){
     if (!theme) return;
@@ -258,11 +257,10 @@
     }
   };
 
-  // Apply saved theme immediately on load
   const savedTheme = loadTheme(); if (savedTheme) applyTheme(savedTheme);
-
   window.addEventListener('storage', (e) => { if (e.key === KEY || e.key === EMPH_KEY || e.key === THEME_KEY) scheduleRedraw(); });
 
+  function setViewBox(){ svg.attr('viewBox', '0 0 ' + W + ' ' + H); }
   setViewBox();
   scheduleRedraw();
 })();

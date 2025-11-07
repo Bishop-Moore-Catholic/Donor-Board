@@ -1,23 +1,8 @@
-# Donor Board — Admin-controlled Theme (push to Display)
+# Donor Board — Chip Click Fix
 
-**How it works**
-- The **admin page** now includes a Theme panel for the *display*.
-- When you click **Apply & Push**, the theme is saved to `localStorage` as `donorTheme.v1`
-  **and** broadcast to the display via `BroadcastChannel('donors')` with `{ type: 'themeUpdate', theme }`.
-- The **display page** listens for `themeUpdate`, applies the theme (CSS variables + background image), persists it, and reflows the cloud (so no collisions after weight/scale changes).
+- Added a dedicated **⋯ handle** on each chip to open/close its menu.
+- Switched to event delegation on `#chips` for reliable click routing.
+- Ensured SVG icons don't swallow clicks via `pointer-events: none` on `svg`.
+- Added console logs for actions (`[chips]` and `[theme]`) to help debug.
 
-**What you can control from Admin**
-- Background color (+ optional background image upload)
-- Title color
-- Name color & font-weight
-- Emphasized color & font-weight
-- Emphasized scale
-
-**Defaults**
-- `styles.css` defines default variables and loads **Futura PT** via your Adobe kit.
-
-**Run locally**
-```bash
-python3 -m http.server 5500
-# open admin.html and display.html
-```
+Everything else remains the same (theme push from admin, display applies & persists).
