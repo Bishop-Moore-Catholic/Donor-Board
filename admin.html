@@ -6,7 +6,7 @@
 <title>Donor Board – Admin</title>
 <link rel="icon" href="assets/favicon.svg">
 <style>
-  :root { --accent:#111; --muted:#666; --chip-border:#ddd; }
+  :root { --accent:#111; --muted:#666; --chip-border:#ddd; --emph-bg:#fff8d6; }
   * { box-sizing: border-box; }
   body { font-family: system-ui, sans-serif; margin: 24px; color:#111; }
   h1 { margin: 0 0 12px; }
@@ -23,6 +23,16 @@
     padding:8px 12px; border:1px solid var(--chip-border); border-radius:999px;
     background:#fff; font-size:14px;
     user-select: none;
+  }
+  .chip.emph {
+    background: var(--emph-bg);
+    border-color:#111;
+    box-shadow: 0 0 0 2px rgba(0,0,0,.06) inset;
+  }
+  .chip .badge {
+    position:absolute; top:-8px; right:-8px;
+    width:18px; height:18px; border-radius:50%;
+    background:#111; color:#fff; font-size:12px; display:flex; align-items:center; justify-content:center;
   }
 
   .menu {
@@ -52,13 +62,13 @@
   <div class="row">
     <button id="openDisplay">Open Display Page</button>
     <button id="clearAll" title="Remove all donors (affects display)">Clear All</button>
-    <span class="muted">Paste names (newline, comma, or tab-separated). Duplicates are ignored (case-insensitive, trimmed).</span>
+    <span class="muted">Paste names (newline, comma, or tab-separated). Add '+' anywhere in a name to auto‑emphasize it. Duplicates are ignored.</span>
   </div>
 
   <p></p>
   <textarea id="nameInput" placeholder="e.g.
-Jane Smith\tJohn D. Brown, Alicia Cruz
-The Morales Family"></textarea>
+Jane Smith\tJohn D. Brown+, Alicia +Cruz
+The +Morales Family"></textarea>
   <p class="row">
     <button class="primary" id="addNames">Add Names</button>
   </p>
@@ -77,38 +87,48 @@ The Morales Family"></textarea>
   const keyName = s => normalizeName(s).toLowerCase();
   const load = () => JSON.parse(localStorage.getItem(KEY) || '[]');
   const save = list => localStorage.setItem(KEY, JSON.stringify(list));
+  const loadEmph = () => new Set(JSON.parse(localStorage.getItem(EMPH_KEY) || '[]'));
+  const saveEmph = (set) => localStorage.setItem(EMPH_KEY, JSON.stringify(Array.from(set)));
 
-  function sendEmphasize(name) { CH.postMessage({ type:'emphasize', name }); }
+  function toggleEmphasize(name){
+    const k = keyName(name);
+    const set = loadEmph();
+    if (set.has(k)) set.delete(k); else set.add(k);
+    saveEmph(set);
+    CH.postMessage({ type:'emphasize', name });
+    renderChips();
+  }
   function deleteName(name) {
     const k = keyName(name);
     const list = load().filter(d => keyName(d.name) !== k);
     save(list);
+    // also remove from emph set if present
+    const set = loadEmph(); if (set.delete(k)) saveEmph(set);
     CH.postMessage({ type:'remove', key: k });
     renderChips();
   }
 
   function makeChip(d){
     const chip = document.createElement('div');
-    chip.className = 'chip';
+    const emphSet = loadEmph();
+    const isEmph = emphSet.has(keyName(d.name));
+    chip.className = 'chip' + (isEmph ? ' emph' : '');
     chip.dataset.name = d.name;
     chip.title = new Date(d.addedAt).toLocaleString();
+    const label = document.createElement('span'); label.className = 'label'; label.textContent = d.name;
+    chip.appendChild(label);
+    if (isEmph) {
+      const b = document.createElement('div'); b.className = 'badge'; b.textContent = '★'; chip.appendChild(b);
+    }
 
-    const label = document.createElement('span');
-    label.className = 'label';
-    label.textContent = d.name;
-
-    const menu = document.createElement('div');
-    menu.className = 'menu';
-
+    const menu = document.createElement('div'); menu.className = 'menu';
     const emph = document.createElement('button');
-    emph.className = 'action-btn'; emph.setAttribute('data-act','emph'); emph.title = 'Emphasize';
+    emph.className = 'action-btn'; emph.setAttribute('data-act','emph'); emph.title = isEmph ? 'Un‑emphasize' : 'Emphasize';
     emph.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M12 3l2.4 4.86 5.37.78-3.88 3.78.92 5.36L12 15.9 7.19 17.78l.92-5.36L4.23 8.64l5.37-.78L12 3z"/></svg>';
     const del = document.createElement('button');
     del.className = 'action-btn'; del.setAttribute('data-act','del'); del.title = 'Delete';
     del.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M3 6h18M9 6V4h6v2M8 6l1 14h6l1-14"/></svg>';
-
-    menu.appendChild(emph); menu.appendChild(del);
-    chip.appendChild(label); chip.appendChild(menu);
+    menu.appendChild(emph); menu.appendChild(del); chip.appendChild(menu);
     return chip;
   }
 
@@ -116,37 +136,47 @@ The Morales Family"></textarea>
     const list = load();
     $('#count').textContent = list.length;
     const frag = document.createDocumentFragment();
-    list.sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'})).forEach(d => {
-      frag.appendChild(makeChip(d));
-    });
-    $('#chips').innerHTML = '';
-    $('#chips').appendChild(frag);
+    list.sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'})).forEach(d => frag.appendChild(makeChip(d)));
+    $('#chips').innerHTML = ''; $('#chips').appendChild(frag);
   }
 
   function splitDonorText(raw) { return raw.split(new RegExp('[,\t\r\n]+','g')); }
 
   function addFromInput() {
     const raw = $('#nameInput').value;
-    const parts = splitDonorText(raw).map(normalizeName).filter(Boolean);
-    if (!parts.length) return;
+    const tokens = splitDonorText(raw).map(s => s.trim()).filter(Boolean);
+    if (!tokens.length) return;
 
     const list = load();
+    const emphSet = loadEmph();
     const existing = new Set(list.map(d => keyName(d.name)));
     const newOnes = [];
 
-    for (const nm of parts) {
+    for (const token of tokens) {
+      const hasPlus = token.includes('+');
+      const cleaned = token.replace(/\+/g, ' ');
+      const nm = normalizeName(cleaned);
       const k = keyName(nm);
+      if (!nm) continue;
       if (!existing.has(k)) {
         existing.add(k);
         const rec = { name: nm, id: (crypto?.randomUUID?.() || Math.random().toString(36).slice(2)), addedAt: Date.now() };
         list.push(rec);
         newOnes.push(rec);
       }
+      if (hasPlus) emphSet.add(k);
     }
 
     if (newOnes.length) {
       save(list);
+      // persist emphasis and broadcast added & emphasize for those with plus
+      saveEmph(emphSet);
       CH.postMessage({ type:'added', donors: newOnes });
+      // individually broadcast emphasize for plus-marked names so display toggles immediately
+      for (const rec of newOnes) {
+        const k = keyName(rec.name);
+        if (emphSet.has(k)) CH.postMessage({ type:'emphasize', name: rec.name });
+      }
       renderChips();
     }
 
@@ -171,7 +201,7 @@ The Morales Family"></textarea>
     if (clickedBtn && chip) {
       const name = chip.dataset.name;
       const act = clickedBtn.getAttribute('data-act');
-      if (act === 'emph') sendEmphasize(name);
+      if (act === 'emph') toggleEmphasize(name);
       if (act === 'del') deleteName(name);
       return;
     }
@@ -194,7 +224,9 @@ The Morales Family"></textarea>
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') addFromInput();
   });
 
-  window.addEventListener('storage', (e) => { if (e.key === KEY) renderChips(); });
+  window.addEventListener('storage', (e) => {
+    if (e.key === KEY || e.key === EMPH_KEY) renderChips();
+  });
 
   renderChips();
 })();

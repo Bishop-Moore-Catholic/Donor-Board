@@ -37,7 +37,8 @@
   // URL params
   const url = new URL(location.href);
   const bias = url.searchParams.get('bias') || 'balanced'; // larger | balanced | denser
-  const MAX_CAP = Math.min(+(url.searchParams.get('max') || 300), 300);
+  // Default to 350; allow higher via ?max, soft safety cap at 10k
+  const MAX_CAP = Math.min(+(url.searchParams.get('max') || 350), 10000);
 
   function load() { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; } }
   const normalizeName = s => s.normalize('NFKC').replace(/\s+/g,' ').trim();
@@ -95,7 +96,6 @@
           const overlapX = Math.abs(n.x - m.x) < (n.w + m.w)/2;
           const overlapY = Math.abs(n.y - m.y) < (n.h + m.h)/2;
           if (overlapX && overlapY){
-            // push apart minimally; slight preference vertical but keep density
             const dx = (n.x - m.x) || (Math.random()-0.5);
             const dy = (n.y - m.y) || (Math.random()-0.5);
             const push = 4;
@@ -106,7 +106,6 @@
           }
           return false;
         });
-        // clamp
         n.x = Math.max(n.w/2, Math.min(W - n.w/2, n.x));
         n.y = Math.max(n.h/2, Math.min(H - n.h/2, n.y));
       });
@@ -123,12 +122,10 @@
     const total = donors.length;
     console.log('[DonorBoard] total donors (capped):', total);
 
-    // prune emphasized names no longer present
     let changed = false;
     emphasized.forEach(k => { if (!donors.find(d => keyName(d.name) === k)) { emphasized.delete(k); changed = true; } });
     if (changed) saveEmph(emphasized);
 
-    // adaptive parameters
     const base = (total <= 50) ? cssBase() : cssBase() * Math.max(0.6, 1 - 0.4 * ((total - 50) / 200));
     const tries = [
       {scale:1.00, pad:1.00},
@@ -148,7 +145,7 @@
     const rng = seededRandom(seed);
 
     (function attempt(){
-      if (attemptIndex >= tries.length){ inFlight=false; if (pending){ pending=false; redrawAdaptive(); } return; }
+      if (attemptIndex >= tries.length){ inFlight=false; if (pending){ pending = false; redrawAdaptive(); } return; }
       const t = tries[attemptIndex++];
       const fontPx = base * t.scale;
       const padScale = t.pad;
@@ -167,11 +164,9 @@
         .on('end', placed => {
           console.log('[DonorBoard] attempt', attemptIndex, 'fontPx', fontPx.toFixed(1), 'padScale', padScale, 'placed', placed.length);
           const ratio = placed.length / (total || 1);
-          if (ratio < accept && attemptIndex < tries.length) { attempt(); return; }
-
+                  if (ratio < accept && attemptIndex < tries.length) { attempt(); return; }
           let nextPos = new Map();
           placed.forEach(d => nextPos.set(d.key, { x: d.x + CENTERX, y: d.y + CENTERY, rotate: d.rotate || 0, size: d.size }));
-
           nextPos = relaxWithQuadtree(nextPos, fontPx);
 
           const layer = svg.selectAll('g.words').data([null]).join('g').attr('class','words');
@@ -204,7 +199,6 @@
           inFlight = false;
           if (pending){ pending = false; redrawAdaptive(); }
         });
-
       cloud.start();
     })();
   }

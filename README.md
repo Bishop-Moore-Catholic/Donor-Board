@@ -1,17 +1,23 @@
-# Donor Board (dense packing + no overlaps)
+# Donor Board (cap 350 + auto‑emphasize with '+')
 
-**What’s new**
-- **Max 300 names** (configurable via `?max=NNN`, capped 300).
-- **Bias**: `?bias=larger|balanced|denser` (default balanced). This sets the placement acceptance ratio (80%, 95%, 97%).  
-- **Adaptive attempts** down to 0.70 font scale & padding.
-- **Accurate text measurement** using an offscreen canvas to estimate true label widths.
-- **Quadtree collision resolution** pass ensures *no overlaps* while keeping a dense look.
-- Keeps **seeded RNG** and **rectangular spiral**.
+**Admin**
+- Adding names: include a `+` anywhere in a token to **auto‑emphasize** that donor.
+  - `John +Doe`, `+Jane Smith`, `Family+Foundation` → all become emphasized.
+  - `+` is stripped from the stored/displayed name.
+- Emphasis is **persisted** and **broadcast** immediately.
+- Chips for emphasized donors are **highlighted** (pale gold) with a ★ badge.
+- Clear All clears donors **and** emphasis.
 
-**Run**
-```
+**Display**
+- Default cap is **350** donors. You can change (or lift) it via `?max=NNNN` (soft cap 10k).
+- Keeps dense packing, seeded RNG, quadtree collision resolution.
+
+**Examples**
+- `display.html?bias=denser&max=350`
+- `display.html?bias=larger&max=500`
+
+Run locally:
+```bash
 python3 -m http.server 5500
 # open admin.html and display.html
-# for maximal density:
-# http://localhost:5500/display.html?bias=denser&max=300
 ```
