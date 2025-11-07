@@ -1,22 +1,22 @@
-# Donor Board — Themed build (Futura PT + global stylesheet)
+# Donor Board — Admin-controlled Theme (push to Display)
 
-**Global stylesheet**: `styles.css`
-- Imports Adobe Fonts kit and applies **Futura PT** globally.
-- Quick theming with CSS variables:
-  - `--bg`, `--bg-image`
-  - `--title-color`, `--title-size`, `--title-weight`
-  - `--name-color`, `--name-weight`
-  - `--emph-color`, `--emph-weight`, `--emph-scale`
-  - Chip & button colors for the admin UI
-- Title (`.db-title`) is **centered and larger**.
+**How it works**
+- The **admin page** now includes a Theme panel for the *display*.
+- When you click **Apply & Push**, the theme is saved to `localStorage` as `donorTheme.v1`
+  **and** broadcast to the display via `BroadcastChannel('donors')` with `{ type: 'themeUpdate', theme }`.
+- The **display page** listens for `themeUpdate`, applies the theme (CSS variables + background image), persists it, and reflows the cloud (so no collisions after weight/scale changes).
 
-**Background image**
-- Put a file in `assets/bg.jpg` and set in `:root`:
-  ```css
-  --bg-image: url('assets/bg.jpg') center/cover no-repeat fixed;
-  ```
+**What you can control from Admin**
+- Background color (+ optional background image upload)
+- Title color
+- Name color & font-weight
+- Emphasized color & font-weight
+- Emphasized scale
 
-**Run**
+**Defaults**
+- `styles.css` defines default variables and loads **Futura PT** via your Adobe kit.
+
+**Run locally**
 ```bash
 python3 -m http.server 5500
 # open admin.html and display.html

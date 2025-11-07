@@ -8,34 +8,64 @@
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="page">
-    <h1 class="db-title">Donor Board – Admin</h1>
+  <div class="page" style="padding:24px; font-family: system-ui, sans-serif;">
+    <h1 style="margin:0 0 12px;">Donor Board – Admin</h1>
 
-    <div class="row">
+    <div class="row" style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
       <button id="openDisplay">Open Display Page</button>
       <button id="clearAll" title="Remove all donors (affects display)">Clear All</button>
-      <span class="muted">Paste names (newline, comma, or tab-separated). Add '+' anywhere in a name to auto‑emphasize it. Duplicates are ignored.</span>
+      <span style="color:#666; font-size:13px;">Paste names (newline, comma, or tab-separated). Add '+' anywhere in a name to auto‑emphasize it. Duplicates are ignored.</span>
     </div>
 
     <p></p>
-    <textarea id="nameInput" placeholder="e.g.
+    <textarea id="nameInput" style="width:min(900px,100%); height:180px; padding:12px; font-size:16px;" placeholder="e.g.
 Jane Smith\tJohn D. Brown+, Alicia +Cruz
 The +Morales Family"></textarea>
-    <p class="row">
+    <p class="row" style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
       <button class="primary" id="addNames">Add Names</button>
     </p>
 
-    <h3>Current donors (<span id="count">0</span>)</h3>
-    <div id="chips"></div>
+    <div class="admin-chips">
+      <h3>Current donors (<span id="count">0</span>)</h3>
+      <div id="chips"></div>
+    </div>
+
+    <!-- THEME PANEL (ADMIN) -->
+    <div class="theme-panel" id="themePanel">
+      <h3>Display Theme (push to display)</h3>
+      <div class="theme-grid">
+        <div class="theme-row"><label>Background</label><input type="color" id="bgColor"></div>
+        <div class="theme-row"><label>Title color</label><input type="color" id="titleColor"></div>
+        <div class="theme-row"><label>Name color</label><input type="color" id="nameColor"></div>
+        <div class="theme-row"><label>Emphasized color</label><input type="color" id="emphColor"></div>
+        <div class="theme-row"><label>Name weight</label>
+          <select id="nameWeight">
+            <option>300</option><option selected>500</option><option>600</option><option>700</option><option>800</option>
+          </select>
+        </div>
+        <div class="theme-row"><label>Emph. weight</label>
+          <select id="emphWeight">
+            <option>600</option><option selected>800</option><option>900</option>
+          </select>
+        </div>
+        <div class="theme-row"><label>Emph. scale</label><input type="range" id="emphScale" min="1.0" max="1.8" step="0.05" value="1.35"></div>
+        <div class="theme-row"><label>Background image</label><input type="file" id="bgImage" accept="image/*"></div>
+      </div>
+      <div class="theme-actions">
+        <button id="resetTheme">Reset</button>
+        <button id="pushTheme">Apply & Push</button>
+      </div>
+    </div>
   </div>
 
 <script>
 (() => {
   const KEY = 'donorList.v1';
   const EMPH_KEY = 'donorEmphasized.v1';
+  const THEME_KEY = 'donorTheme.v1';
   const CH = new BroadcastChannel('donors');
-  const $ = sel => document.querySelector(sel);
 
+  const $ = sel => document.querySelector(sel);
   const normalizeName = s => s.normalize('NFKC').replace(/\s+/g,' ').trim();
   const keyName = s => normalizeName(s).toLowerCase();
   const load = () => JSON.parse(localStorage.getItem(KEY) || '[]');
@@ -69,9 +99,7 @@ The +Morales Family"></textarea>
     chip.title = new Date(d.addedAt).toLocaleString();
     const label = document.createElement('span'); label.className = 'label'; label.textContent = d.name;
     chip.appendChild(label);
-    if (isEmph) {
-      const b = document.createElement('div'); b.className = 'badge'; b.textContent = '★'; chip.appendChild(b);
-    }
+    if (isEmph) { const b = document.createElement('div'); b.className = 'badge'; b.textContent = '★'; chip.appendChild(b); }
 
     const menu = document.createElement('div'); menu.className = 'menu';
     const emph = document.createElement('button');
@@ -143,30 +171,79 @@ The +Morales Family"></textarea>
     renderChips();
   }
 
-  document.addEventListener('click', (e) => {
-    const chip = e.target.closest('.chip');
-    const clickedBtn = e.target.closest('.action-btn');
-    const anyMenu = e.target.closest('.menu');
+  // ---------- THEME (Admin pushes to Display) ----------
+  const gcs = getComputedStyle(document.documentElement);
+  const defaults = {
+    bg: gcs.getPropertyValue('--bg').trim() || '#f7f7f7',
+    titleColor: gcs.getPropertyValue('--title-color').trim() || '#0f0f0f',
+    nameColor: gcs.getPropertyValue('--name-color').trim() || '#0f0f0f',
+    nameWeight: gcs.getPropertyValue('--name-weight').trim() || '500',
+    emphColor: gcs.getPropertyValue('--emph-color').trim() || '#0f0f0f',
+    emphWeight: gcs.getPropertyValue('--emph-weight').trim() || '800',
+    emphScale: parseFloat(gcs.getPropertyValue('--emph-scale')) || 1.35,
+  };
+  function loadTheme(){ try { return JSON.parse(localStorage.getItem(THEME_KEY) || 'null'); } catch { return null; } }
+  function saveTheme(theme){ localStorage.setItem(THEME_KEY, JSON.stringify(theme)); }
 
-    if (clickedBtn && chip) {
-      const name = chip.dataset.name;
-      const act = clickedBtn.getAttribute('data-act');
-      if (act === 'emph') toggleEmphasize(name);
-      if (act === 'del') deleteName(name);
-      return;
-    }
+  function initThemeUI(){
+    const bg = document.getElementById('bgColor');
+    const tcol = document.getElementById('titleColor');
+    const ncol = document.getElementById('nameColor');
+    const ecol = document.getElementById('emphColor');
+    const nwt = document.getElementById('nameWeight');
+    const ewt = document.getElementById('emphWeight');
+    const esc = document.getElementById('emphScale');
+    const bgi = document.getElementById('bgImage');
 
-    if (chip && !anyMenu) {
-      document.querySelectorAll('.chip.menu-open').forEach(el => { if (el !== chip) el.classList.remove('menu-open'); });
-      chip.classList.toggle('menu-open');
-      return;
-    }
+    const saved = loadTheme() || defaults;
+    const toHex = (v)=> /^#/.test(v)?v.trim():('#'+Array.from((v.match(/\d+/g)||[]).slice(0,3)).map(n=>('0'+(+n).toString(16)).slice(-2)).join(''));
 
-    if (!chip && !anyMenu) {
-      document.querySelectorAll('.chip.menu-open').forEach(el => el.classList.remove('menu-open'));
-    }
-  });
+    bg.value = toHex(saved.bg);
+    tcol.value = toHex(saved.titleColor);
+    ncol.value = toHex(saved.nameColor);
+    ecol.value = toHex(saved.emphColor);
+    nwt.value = String(saved.nameWeight);
+    ewt.value = String(saved.emphWeight);
+    esc.value = String(saved.emphScale);
 
+    document.getElementById('pushTheme').addEventListener('click', async () => {
+      const theme = {
+        bg: bg.value,
+        titleColor: tcol.value,
+        nameColor: ncol.value,
+        nameWeight: Number(nwt.value),
+        emphColor: ecol.value,
+        emphWeight: Number(ewt.value),
+        emphScale: parseFloat(esc.value),
+      };
+      if (bgi.files && bgi.files[0]) {
+        const dataUrl = await new Promise(res => { const fr = new FileReader(); fr.onload = e => res(e.target.result); fr.readAsDataURL(bgi.files[0]); });
+        theme.bgImageData = dataUrl;
+      } else {
+        const cur = loadTheme(); if (cur && cur.bgImageData) theme.bgImageData = cur.bgImageData;
+      }
+      saveTheme(theme);
+      // Push to display
+      CH.postMessage({ type: 'themeUpdate', theme });
+      alert('Theme pushed to display.');
+    });
+
+    document.getElementById('resetTheme').addEventListener('click', () => {
+      localStorage.removeItem(THEME_KEY);
+      CH.postMessage({ type: 'themeUpdate', theme: defaults });
+      alert('Theme reset to defaults and pushed.');
+      // Reset inputs
+      bg.value = toHex(defaults.bg); tcol.value = toHex(defaults.titleColor);
+      ncol.value = toHex(defaults.nameColor); ecol.value = toHex(defaults.emphColor);
+      nwt.value = String(defaults.nameWeight); ewt.value = String(defaults.emphWeight); esc.value = String(defaults.emphScale);
+      bgi.value='';
+    });
+
+    // On load, push current saved theme once so display can sync quickly if opened later
+    if (saved) CH.postMessage({ type: 'themeUpdate', theme: saved });
+  }
+
+  // ---------- Wire events ----------
   document.getElementById('addNames').addEventListener('click', addFromInput);
   document.getElementById('clearAll').addEventListener('click', clearAll);
   document.getElementById('openDisplay').addEventListener('click', () => window.open('display.html', 'DonorDisplay', 'noopener,noreferrer'));
@@ -174,6 +251,7 @@ The +Morales Family"></textarea>
   window.addEventListener('storage', (e) => { if (e.key === KEY || e.key === EMPH_KEY) renderChips(); });
 
   renderChips();
+  initThemeUI();
 })();
 </script>
 </body>

@@ -17,10 +17,34 @@
 (() => {
   const KEY = 'donorList.v1';
   const EMPH_KEY = 'donorEmphasized.v1';
+  const THEME_KEY = 'donorTheme.v1';
   const CH = new BroadcastChannel('donors');
   const svg = d3.select('#cloud');
   const stage = document.getElementById('stage');
   let W = stage.clientWidth, H = stage.clientHeight;
+
+  // Apply theme helpers (same as earlier display build)
+  const rootStyle = document.documentElement.style;
+  function applyTheme(theme){
+    if (!theme) return;
+    rootStyle.setProperty('--bg', theme.bg);
+    rootStyle.setProperty('--title-color', theme.titleColor);
+    rootStyle.setProperty('--name-color', theme.nameColor);
+    rootStyle.setProperty('--name-weight', String(theme.nameWeight));
+    rootStyle.setProperty('--emph-color', theme.emphColor);
+    rootStyle.setProperty('--emph-weight', String(theme.emphWeight));
+    rootStyle.setProperty('--emph-scale', String(theme.emphScale));
+    if (theme.bgImageData) {
+      document.body.style.backgroundImage = `url(${theme.bgImageData})`;
+      document.body.style.backgroundSize = 'cover';
+      document.body.style.backgroundPosition = 'center';
+    } else {
+      document.body.style.backgroundImage = 'none';
+    }
+    scheduleRedraw();
+  }
+  function loadTheme(){ try { return JSON.parse(localStorage.getItem(THEME_KEY) || 'null'); } catch { return null; } }
+  function saveTheme(theme){ localStorage.setItem(THEME_KEY, JSON.stringify(theme)); }
 
   function setViewBox(){ svg.attr('viewBox', '0 0 ' + W + ' ' + H); }
   function resize(){ W = stage.clientWidth; H = stage.clientHeight; setViewBox(); scheduleRedraw(); }
@@ -38,7 +62,7 @@
   function saveEmph(set) { localStorage.setItem(EMPH_KEY, JSON.stringify(Array.from(set))); }
 
   const cssBase = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--base-size')) || 28;
-  const emphScale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--emph-scale')) || 1.35;
+  const emphScale = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--emph-scale')) || 1.35;
 
   let prevPos = new Map();
   let emphasized = loadEmph();
@@ -104,6 +128,7 @@
     return nextPos;
   }
 
+  function setViewBox(){ svg.attr('viewBox', '0 0 ' + W + ' ' + H); }
   function scheduleRedraw(){ if (inFlight){ pending = true; return; } redrawAdaptive(); }
 
   function redrawAdaptive(){
@@ -183,7 +208,7 @@
             .attr('font-size', d => d.size)
             .attr('transform', d => {
               const p = nextPos.get(d.key);
-              const scale = emphasized.has(d.key) ? emphScale : 1;
+              const scale = emphasized.has(d.key) ? (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--emph-scale')) || 1.35) : 1;
               return 'translate(' + p.x + ',' + p.y + ') rotate(' + (d.rotate||0) + ') scale(' + scale + ')';
             });
 
@@ -197,6 +222,7 @@
   }
 
   function toggleEmphasize(nameKey){
+    const scaleVal = (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--emph-scale')) || 1.35);
     if (emphasized.has(nameKey)) emphasized.delete(nameKey);
     else emphasized.add(nameKey);
     saveEmph(emphasized);
@@ -205,12 +231,16 @@
     if (!node.size() || !p) { scheduleRedraw(); return; }
     node.classed('emph', emphasized.has(nameKey))
       .transition().duration(200)
-      .attr('transform', 'translate(' + p.x + ',' + p.y + ') rotate(' + p.rotate + ') scale(' + (emphasized.has(nameKey)?emphScale:1) + ')');
+      .attr('transform', 'translate(' + p.x + ',' + p.y + ') rotate(' + p.rotate + ') scale(' + (emphasized.has(nameKey)?scaleVal:1) + ')');
   }
 
   CH.onmessage = (ev) => {
     const msg = ev.data || {};
-    if (msg.type === 'added' && Array.isArray(msg.donors)) scheduleRedraw();
+    if (msg.type === 'themeUpdate' && msg.theme) {
+      saveTheme(msg.theme);
+      applyTheme(msg.theme);
+    }
+    else if (msg.type === 'added' && Array.isArray(msg.donors)) scheduleRedraw();
     else if (msg.type === 'reset') {
       svg.selectAll('*').remove();
       prevPos.clear();
@@ -228,7 +258,10 @@
     }
   };
 
-  window.addEventListener('storage', (e) => { if (e.key === KEY || e.key === EMPH_KEY) scheduleRedraw(); });
+  // Apply saved theme immediately on load
+  const savedTheme = loadTheme(); if (savedTheme) applyTheme(savedTheme);
+
+  window.addEventListener('storage', (e) => { if (e.key === KEY || e.key === EMPH_KEY || e.key === THEME_KEY) scheduleRedraw(); });
 
   setViewBox();
   scheduleRedraw();
