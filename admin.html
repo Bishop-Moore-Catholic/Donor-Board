@@ -6,15 +6,40 @@
 <title>Donor Board – Admin</title>
 <link rel="icon" href="assets/favicon.svg">
 <style>
-  :root { --accent:#222; }
+  :root { --accent:#111; --muted:#666; --chip-border:#ddd; }
   body { font-family: system-ui, sans-serif; margin: 24px; color:#111; }
   h1 { margin: 0 0 12px; }
   .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
   textarea { width: min(900px, 100%); height: 180px; padding:12px; font-size:16px; }
   button { padding:10px 14px; border:1px solid #ccc; background:#fff; border-radius:10px; cursor:pointer; }
   button.primary { background:#111; color:#fff; border-color:#111; }
-  .pill { display:inline-block; padding:6px 10px; border:1px solid #ddd; border-radius:999px; margin:6px 6px 0 0; font-size:14px; }
-  .muted { color:#666; font-size:13px; }
+  .muted { color:var(--muted); font-size:13px; }
+
+  /* Chips with hover action tooltip */
+  #chips { display:flex; flex-wrap:wrap; gap:8px; }
+  .chip {
+    position:relative;
+    display:inline-flex; align-items:center; gap:8px;
+    padding:6px 10px; border:1px solid var(--chip-border); border-radius:999px;
+    background:#fff; font-size:14px;
+  }
+  .chip .actions {
+    position:absolute; inset:auto 0 100% 0; /* above the chip */
+    transform: translateY(-6px);
+    display:flex; gap:6px;
+    opacity:0; pointer-events:none;
+    transition: opacity .15s ease;
+    justify-content:center;
+  }
+  .chip:hover .actions { opacity:1; pointer-events:auto; }
+  .action-btn {
+    width:26px; height:26px; border-radius:6px; border:1px solid #ddd;
+    background:#fff; display:grid; place-items:center; cursor:pointer;
+    box-shadow:0 1px 2px rgba(0,0,0,.06);
+  }
+  .action-btn svg { width:16px; height:16px; }
+  .action-btn:hover { background:#111; border-color:#111; }
+  .action-btn:hover svg { filter: invert(1); }
 </style>
 </head>
 <body>
@@ -48,18 +73,61 @@ The Morales Family"></textarea>
   const load = () => JSON.parse(localStorage.getItem(KEY) || '[]');
   const save = list => localStorage.setItem(KEY, JSON.stringify(list));
 
+  function sendEmphasize(name) {
+    CH.postMessage({ type:'emphasize', name });
+  }
+  function deleteName(name) {
+    const k = keyName(name);
+    const list = load().filter(d => keyName(d.name) !== k);
+    save(list);
+    CH.postMessage({ type:'remove', key: k });
+    renderChips();
+  }
+
   function renderChips() {
     const list = load();
     $('#count').textContent = list.length;
-    $('#chips').innerHTML = list
+    const items = list
       .sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}))
-      .map(d => `<span class="pill" title="${new Date(d.addedAt).toLocaleString()}">${d.name}</span>`).join('');
+      .map(d => {
+        const title = new Date(d.addedAt).toLocaleString();
+        // Tooltip with emphasize/delete buttons
+        return \`
+        <div class="chip" data-name="\${d.name}" title="\${title}">
+          <div class="actions">
+            <button class="action-btn" data-act="emph" title="Emphasize">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 3l2.4 4.86 5.37.78-3.88 3.78.92 5.36L12 15.9 7.19 17.78l.92-5.36L4.23 8.64l5.37-.78L12 3z"/>
+              </svg>
+            </button>
+            <button class="action-btn" data-act="del" title="Delete">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 6h18M9 6V4h6v2M8 6l1 14h6l1-14"/>
+              </svg>
+            </button>
+          </div>
+          <span class="label">\${d.name}</span>
+        </div>\`
+      }).join('');
+    $('#chips').innerHTML = items;
+
+    // Wire actions (event delegation)
+    $('#chips').addEventListener('click', (e) => {
+      const btn = e.target.closest('.action-btn');
+      if (!btn) return;
+      const chip = e.target.closest('.chip');
+      const name = chip?.dataset?.name;
+      if (!name) return;
+      const act = btn.dataset.act;
+      if (act === 'emph') sendEmphasize(name);
+      if (act === 'del') deleteName(name);
+    }, { once: true });
   }
 
   function addFromInput() {
     const raw = $('#nameInput').value;
     // Split on newline OR comma OR tab
-    const parts = raw.split(/[\n,\t,]/g).map(normalizeName).filter(Boolean);
+    const parts = raw.split(/[\n,\t]/g).map(normalizeName).filter(Boolean);
     if (!parts.length) return;
 
     const list = load();

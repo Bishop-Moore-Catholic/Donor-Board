@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Donor Board – Display (d3-cloud streaming, fixed)</title>
+<title>Donor Board – Display (d3-cloud padded + streaming)</title>
 <link rel="icon" href="assets/favicon.svg">
 <script src="https://unpkg.com/d3@7"></script>
 <script src="https://unpkg.com/d3-cloud/build/d3.layout.cloud.js"></script>
@@ -30,15 +30,8 @@
   const stage = document.getElementById('stage');
   let W = stage.clientWidth, H = stage.clientHeight;
 
-  function setViewBox(){
-    // use string concat to avoid template literal escaping issues
-    svg.attr('viewBox', '0 0 ' + W + ' ' + H);
-  }
-  function resize(){
-    W = stage.clientWidth; H = stage.clientHeight;
-    setViewBox();
-    redraw();
-  }
+  function setViewBox(){ svg.attr('viewBox', '0 0 ' + W + ' ' + H); }
+  function resize(){ W = stage.clientWidth; H = stage.clientHeight; setViewBox(); redraw(); }
   window.addEventListener('resize', resize);
 
   function load() { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; } }
@@ -46,12 +39,39 @@
   const keyName = s => normalizeName(s).toLowerCase();
 
   function wordsFromDonors() {
-    const baseSizePx = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--base-size')) || 28;
+    const size = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--base-size')) || 28;
     const list = load().slice().sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}));
-    return list.map(d => ({ text: d.name, key: keyName(d.name), size: baseSizePx }));
+    return list.map(d => ({ text: d.name, key: keyName(d.name), size }));
   }
 
   let prevPos = new Map(); // key -> {x,y,rotate,size}
+
+  function dynamicPadding(d) {
+    // Larger words & longer names get more gap; helps avoid sprite/bounds collisions
+    // Tweak coefficients as desired
+    const base = Math.max(6, Math.round(d.size * 0.25));
+    const extra = Math.min(20, Math.floor(d.text.length * 0.6));
+    return base + extra;
+  }
+
+  function emphasizeOnce(nameKey) {
+    // Pulse the word: scale up and back
+    const node = svg.selectAll('text.word').filter(function(){ return this.textContent && nameKey === keyName(this.textContent); });
+    if (!node.size()) return;
+    // bring to front
+    node.each(function(){ this.parentNode.appendChild(this); });
+    node.transition().duration(250)
+      .attr('transform', function() {
+        const t = this.getAttribute('transform');
+        return t + ' scale(1.4)';
+      })
+      .transition().duration(500)
+      .attr('transform', function() {
+        // remove the scale by recomputing from stored prevPos
+        const p = prevPos.get(nameKey);
+        return 'translate(' + p.x + ',' + p.y + ') rotate(' + p.rotate + ')';
+      });
+  }
 
   function redraw() {
     const CENTERX = W/2, CENTERY = H/2;
@@ -62,7 +82,7 @@
     const cloud = d3.layout.cloud()
       .size([W, H])
       .words(words)
-      .padding(4)
+      .padding(dynamicPadding)  // << better padding
       .font('system-ui, sans-serif')
       .fontSize(d => d.size)
       .rotate(() => 0)
@@ -73,7 +93,6 @@
         streamed.add(k);
         const pos = { x: d.x + CENTERX, y: d.y + CENTERY, rotate: d.rotate || 0, size: d.size };
 
-        // Try to select existing node by matching textContent (since old nodes may have no bound data yet)
         let node = layer.selectAll('text.word').filter(function(){ return this.textContent === d.text; });
         if (!node.size()) {
           node = layer.append('text')
@@ -99,7 +118,6 @@
         const nextPos = new Map();
         placed.forEach(d => nextPos.set(keyName(d.text), { x: d.x + CENTERX, y: d.y + CENTERY, rotate: d.rotate || 0, size: d.size }));
 
-        // Safe key function: fall back to element text if old data is undefined
         const sel = layer.selectAll('text.word').data(placed, function(d){ return d ? d.text : this.textContent; });
 
         sel.exit().transition().duration(400).style('opacity', 0).remove();
@@ -141,6 +159,13 @@
     else if (msg.type === 'reset') {
       svg.selectAll('*').remove();
       fullRender();
+    }
+    else if (msg.type === 'emphasize' && msg.name) {
+      emphasizeOnce(keyName(msg.name));
+    }
+    else if (msg.type === 'remove' && msg.key) {
+      // redraw based on current storage (admin already saved new list)
+      redraw();
     }
   };
 
