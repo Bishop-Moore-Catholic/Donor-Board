@@ -1,17 +1,13 @@
-# Donor Board (Click menus + vertical spacing + scaling)
+# Donor Board (stable layout fix + scaling)
 
 **Admin**
-- Tooltip replaced with **click-to-open menu** (stays open until you click elsewhere).
-- Larger buttons and **centered glyphs** (flexbox).
+- Click-to-open chip menus (centered glyphs), emphasize/delete controls.
 
 **Display**
-- Adds **more vertical separation** in a post-layout relaxation pass that prioritizes Y movement.
-- **Dynamic font scaling**: after 50 names, size scales down linearly to 65% at 250 names.
-- Keeps streaming-in animation and persistent emphasize toggle.
-
-Tune spacing in `display.html`:
-- `dynamicPadding()` – increases base padding
-- `relaxPositions()` – adjust `passes`, `pushY`, `minRowGap`
+- Rebuilt for stability: synchronous d3-cloud layout (no `timeInterval`/streaming).
+- Smooth transitions on redraw; positions relax vertically to reduce overlaps.
+- Font auto-scales after 50 names (down to ~60% by 250 names).
+- Emphasize toggles persist via `localStorage` and survive redraws.
 
 Run locally:
 ```bash

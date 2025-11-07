@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Donor Board – Display (spacing + scaling)</title>
+<title>Donor Board – Display (stable layout + scaling)</title>
 <link rel="icon" href="assets/favicon.svg">
 <script src="https://unpkg.com/d3@7"></script>
 <script src="https://unpkg.com/d3-cloud/build/d3.layout.cloud.js"></script>
@@ -13,7 +13,7 @@
   header { padding:16px 20px 8px; font-weight:600; letter-spacing:.5px; }
   #stage { position: relative; width: 100vw; height: calc(100vh - 48px); }
   svg { width:100%; height:100%; display:block; }
-  .word { font-size: var(--base-size); fill:#111; dominant-baseline: middle; text-anchor: middle; }
+  .word { fill:#111; dominant-baseline: middle; text-anchor: middle; }
   .word.emph { font-weight: 700; }
 </style>
 </head>
@@ -26,6 +26,7 @@
 <script>
 (() => {
   const KEY = 'donorList.v1';
+  const EMPH_KEY = 'donorEmphasized.v1'; // persist emphasize set
   const CH = new BroadcastChannel('donors');
   const svg = d3.select('#cloud');
   const stage = document.getElementById('stage');
@@ -39,27 +40,33 @@
   const normalizeName = s => s.normalize('NFKC').replace(/\s+/g,' ').trim();
   const keyName = s => normalizeName(s).toLowerCase();
 
-  // font scaling past 50 names
-  function baseScaleForCount(n){
-    if (n <= 50) return 1;
-    // linearly drop to 0.65 by 250 names
-    const m = 1 - (n - 50) * ((1 - 0.65) / 200);
-    return Math.max(0.65, m);
+  function loadEmph() {
+    try { return new Set(JSON.parse(localStorage.getItem(EMPH_KEY) || '[]')); }
+    catch { return new Set(); }
+  }
+  function saveEmph(set) {
+    localStorage.setItem(EMPH_KEY, JSON.stringify(Array.from(set)));
+  }
+
+  // base font size from CSS, scaled by count
+  function baseFontPx(total) {
+    const cssSize = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--base-size')) || 28;
+    if (total <= 50) return cssSize;
+    const drop = (total - 50) / 200; // 0..1 over next 200 names
+    const scale = Math.max(0.6, 1 - 0.4 * drop);
+    return cssSize * scale;
   }
 
   function wordsFromDonors() {
-    const cssSize = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--base-size')) || 28;
     const list = load().slice().sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}));
-    const scale = baseScaleForCount(list.length);
-    const size = cssSize * scale;
+    const size = baseFontPx(list.length);
     return list.map(d => ({ text: d.name, key: keyName(d.name), size }));
   }
 
   let prevPos = new Map();
-  const emphasized = new Set();
+  let emphasized = loadEmph();
 
   function dynamicPadding(d) {
-    // heavier vertical padding to discourage stacking
     const base = Math.max(12, Math.round(d.size * 0.4));
     const extra = Math.min(30, Math.floor(d.text.length * 0.8));
     return base + extra;
@@ -75,22 +82,23 @@
     return c;
   }
 
-  // Stronger vertical relaxation: prioritize separating on Y, ensure min row gap
+  // Strong vertical relaxation
   function relaxPositions(nextPos) {
     const keys = Array.from(nextPos.keys());
-    const nodes = keys.map(k => ({ key: k, ...nextPos.get(k) }));
-    const size = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--base-size')) || 28;
-
-    // Estimate bbox
-    nodes.forEach(n => {
-      const textLen = Math.max(6, n.key.length);
-      n.w = Math.max(40, textLen * size * 0.6) + 10;
-      n.h = size * 1.6 + 10; // taller line box
+    const size = baseFontPx(keys.length);
+    const nodes = keys.map(k => {
+      const p = nextPos.get(k);
+      const textLen = Math.max(6, k.length);
+      return {
+        key:k, x:p.x, y:p.y, rotate:p.rotate||0, size:p.size,
+        w: Math.max(40, textLen * size * 0.62) + 12,
+        h: size * 1.7 + 12
+      };
     });
 
-    const passes = 4;
+    const passes = 5;
     const pushX = 3, pushY = 10;
-    const minRowGap = 6;
+    const minRowGap = 8;
 
     for (let p=0; p<passes; p++) {
       for (let i=0; i<nodes.length; i++) {
@@ -99,21 +107,13 @@
           const overlapX = Math.abs(a.x-b.x) < (a.w+b.w)/2;
           const overlapY = Math.abs(a.y-b.y) < (a.h+b.h)/2;
           if (overlapX && overlapY) {
-            // prefer vertical push
             const sign = (a.y <= b.y) ? -1 : 1;
             a.y += sign * pushY;
             b.y -= sign * pushY;
-            // slight horizontal nudge to avoid perfect vertical stacking
             const hSign = (a.x <= b.x) ? -1 : 1;
             a.x += hSign * pushX;
             b.x -= hSign * pushX;
-            // clamp
-            a.x = Math.max(a.w/2, Math.min(W - a.w/2, a.x));
-            b.x = Math.max(b.w/2, Math.min(W - b.w/2, b.x));
-            a.y = Math.max(a.h/2, Math.min(H - a.h/2, a.y));
-            b.y = Math.max(b.h/2, Math.min(H - b.h/2, b.y));
           } else if (overlapX && !overlapY) {
-            // enforce min vertical spacing
             const dy = Math.abs(a.y - b.y);
             if (dy < minRowGap) {
               const sgn = (a.y < b.y) ? -1 : 1;
@@ -121,41 +121,37 @@
               b.y -= sgn * (minRowGap - dy)/2;
             }
           }
+          // clamp to stage
+          a.x = Math.max(a.w/2, Math.min(W - a.w/2, a.x));
+          a.y = Math.max(a.h/2, Math.min(H - a.h/2, a.y));
+          b.x = Math.max(b.w/2, Math.min(W - b.w/2, b.x));
+          b.y = Math.max(b.h/2, Math.min(H - b.h/2, b.y));
         }
       }
     }
 
-    nodes.forEach(n => nextPos.set(n.key, { x:n.x, y:n.y, rotate:n.rotate||0, size:n.size }));
+    nodes.forEach(n => nextPos.set(n.key, { x:n.x, y:n.y, rotate:n.rotate, size:n.size }));
     return nextPos;
   }
 
   function toggleEmphasize(nameKey){
+    if (emphasized.has(nameKey)) emphasized.delete(nameKey);
+    else emphasized.add(nameKey);
+    saveEmph(emphasized);
+    // re-apply transform to that node if it exists
+    const p = prevPos.get(nameKey);
     const node = svg.selectAll('text.word').filter(function(){ return this.textContent && nameKey === keyName(this.textContent); });
-    if (!node.size()) return;
-    if (emphasized.has(nameKey)) {
-      emphasized.delete(nameKey);
-      node.classed('emph', false).transition().duration(300)
-        .attr('transform', () => {
-          const p = prevPos.get(nameKey);
-          return 'translate(' + p.x + ',' + p.y + ') rotate(' + p.rotate + ') scale(1)';
-        });
-    } else {
-      emphasized.add(nameKey);
-      node.each(function(){ this.parentNode.appendChild(this); });
-      node.classed('emph', true).transition().duration(300)
-        .attr('transform', () => {
-          const p = prevPos.get(nameKey);
-          return 'translate(' + p.x + ',' + p.y + ') rotate(' + p.rotate + ') scale(1.35)';
-        });
-    }
+    if (!node.size() || !p) { redraw(); return; }
+    node.classed('emph', emphasized.has(nameKey))
+      .transition().duration(250)
+      .attr('transform', 'translate(' + p.x + ',' + p.y + ') rotate(' + p.rotate + ') scale(' + (emphasized.has(nameKey)?1.35:1) + ')');
   }
 
   function redraw() {
     const CENTERX = W/2, CENTERY = H/2;
     const words = wordsFromDonors();
-    const layer = svg.selectAll('g.words').data([null]).join('g').attr('class','words');
-    const streamed = new Set();
 
+    // Build layout synchronously (more reliable for big lists)
     const cloud = d3.layout.cloud()
       .canvas(hiDpiCanvas)
       .size([W, H])
@@ -164,66 +160,45 @@
       .font('system-ui, sans-serif')
       .fontSize(d => d.size)
       .rotate(() => 0)
-      .timeInterval(10)
-      .on('word', d => {
-        const k = keyName(d.text);
-        if (streamed.has(k)) return;
-        streamed.add(k);
-        const pos = { x: d.x + CENTERX, y: d.y + CENTERY, rotate: d.rotate || 0, size: d.size };
-
-        let node = layer.selectAll('text.word').filter(function(){ return this.textContent === d.text; });
-        if (!node.size()) {
-          node = layer.append('text')
-            .attr('class', 'word')
-            .style('font-family', 'system-ui, sans-serif')
-            .text(d.text)
-            .attr('text-anchor', 'middle')
-            .attr('dominant-baseline', 'middle')
-            .style('opacity', 0)
-            .attr('font-size', d.size)
-            .attr('transform', 'translate(' + (CENTERX) + ',' + (CENTERY) + ') rotate(0)');
-        }
-        node.transition().duration(400)
-          .style('opacity', 1)
-          .attr('font-size', d.size)
-          .attr('transform', 'translate(' + pos.x + ',' + pos.y + ') rotate(' + pos.rotate + ')');
-      })
-      .on('end', placed => {
-        let nextPos = new Map();
-        placed.forEach(d => nextPos.set(keyName(d.text), { x: d.x + CENTERX, y: d.y + CENTERY, rotate: d.rotate || 0, size: d.size }));
-
-        // Relax positions for vertical separation
-        nextPos = relaxPositions(nextPos);
-
-        const sel = layer.selectAll('text.word').data(placed, function(d){ return d ? d.text : this.textContent; });
-
-        sel.exit().transition().duration(300).style('opacity', 0).remove();
-
-        const enter = sel.enter().append('text')
-          .attr('class', 'word')
-          .style('font-family', 'system-ui, sans-serif')
-          .text(d => d.text)
-          .attr('text-anchor', 'middle')
-          .attr('dominant-baseline', 'middle')
-          .style('opacity', 0)
-          .attr('font-size', d => d.size)
-          .attr('transform', 'translate(' + (CENTERX) + ',' + (CENTERY) + ')');
-
-        enter.merge(sel)
-          .classed('emph', function(d){ return emphasized.has(keyName(d.text)); })
-          .transition().duration(600)
-          .style('opacity', 1)
-          .attr('font-size', d => d.size)
-          .attr('transform', d => {
-            const p = nextPos.get(keyName(d.text));
-            const scale = emphasized.has(keyName(d.text)) ? 1.35 : 1;
-            return 'translate(' + p.x + ',' + p.y + ') rotate(' + p.rotate + ') scale(' + scale + ')';
-          });
-
-        prevPos = nextPos;
-      });
+      .on('end', draw);
 
     cloud.start();
+
+    function draw(placed) {
+      let nextPos = new Map();
+      placed.forEach(d => nextPos.set(keyName(d.text), { x: d.x + CENTERX, y: d.y + CENTERY, rotate: d.rotate || 0, size: d.size }));
+
+      // Relax vertically
+      nextPos = relaxPositions(nextPos);
+
+      const layer = svg.selectAll('g.words').data([null]).join('g').attr('class','words');
+      const sel = layer.selectAll('text.word').data(placed, d => d.text);
+
+      sel.exit().transition().duration(300).style('opacity', 0).remove();
+
+      const enter = sel.enter().append('text')
+        .attr('class', 'word')
+        .style('font-family', 'system-ui, sans-serif')
+        .text(d => d.text)
+        .attr('text-anchor', 'middle')
+        .attr('dominant-baseline', 'middle')
+        .style('opacity', 0)
+        .attr('font-size', d => d.size)
+        .attr('transform', 'translate(' + CENTERX + ',' + CENTERY + ')');
+
+      enter.merge(sel)
+        .classed('emph', d => emphasized.has(keyName(d.text)))
+        .transition().duration(600)
+        .style('opacity', 1)
+        .attr('font-size', d => d.size)
+        .attr('transform', d => {
+          const p = nextPos.get(keyName(d.text));
+          const scale = emphasized.has(keyName(d.text)) ? 1.35 : 1;
+          return 'translate(' + p.x + ',' + p.y + ') rotate(' + (d.rotate||0) + ') scale(' + scale + ')';
+        });
+
+      prevPos = nextPos;
+    }
   }
 
   function fullRender() { prevPos.clear(); redraw(); }
