@@ -1,16 +1,6 @@
-# Donor Board (Admin SyntaxError fix + better parsing)
+# Donor Board (persistent emphasize toggle)
 
-**Fixes**
-- Removed problematic template/escape usage in `admin.html` (now DOM-builds chips).
-- Robust delimiter parsing using `new RegExp('[,\t\r\n]+','g')`.
-- Persistent event delegation for chip actions (no `{ once:true }` pitfall).
+- ⭐ Emphasize now toggles on/off and stays until unclicked.
+- Retains hover menu, padding, and overlap relaxation.
 
-**Display**
-- Same d3-cloud streaming + padded layout as previous package.
-
-## Run locally
-```bash
-python3 -m http.server 5500
-# http://localhost:5500/admin.html
-# http://localhost:5500/display.html
-```
+Run with `python3 -m http.server 5500` then open admin and display pages.

@@ -3,171 +3,40 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Donor Board – Display (d3-cloud padded + streaming)</title>
+<title>Donor Board – Display (toggle emphasize)</title>
 <link rel="icon" href="assets/favicon.svg">
 <script src="https://unpkg.com/d3@7"></script>
 <script src="https://unpkg.com/d3-cloud/build/d3.layout.cloud.js"></script>
 <style>
   :root { --base-size: clamp(18px, 2.2vw, 36px); }
-  html, body { height:100%; margin:0; background:#fafafa; color:#111; font-family: system-ui, sans-serif; overflow:hidden; }
-  header { padding:16px 20px 8px; font-weight:600; letter-spacing:.5px; }
-  #stage { position: relative; width: 100vw; height: calc(100vh - 48px); }
-  svg { width:100%; height:100%; display:block; }
-  .word { font-size: var(--base-size); fill:#111; dominant-baseline: middle; text-anchor: middle; }
+  html,body{height:100%;margin:0;background:#fafafa;color:#111;font-family:system-ui,sans-serif;overflow:hidden;}
+  header{padding:16px 20px 8px;font-weight:600;letter-spacing:.5px;}
+  #stage{position:relative;width:100vw;height:calc(100vh - 48px);}
+  svg{width:100%;height:100%;display:block;}
+  .word{font-size:var(--base-size);fill:#111;dominant-baseline:middle;text-anchor:middle;}
+  .word.emph{font-weight:700;}
 </style>
 </head>
 <body>
 <header>Thank you to our generous donors</header>
-<div id="stage">
-  <svg id="cloud" aria-label="Donor word cloud"></svg>
-</div>
-
+<div id="stage"><svg id="cloud"></svg></div>
 <script>
-(() => {
-  const KEY = 'donorList.v1';
-  const CH = new BroadcastChannel('donors');
-  const svg = d3.select('#cloud');
-  const stage = document.getElementById('stage');
-  let W = stage.clientWidth, H = stage.clientHeight;
-
-  function setViewBox(){ svg.attr('viewBox', '0 0 ' + W + ' ' + H); }
-  function resize(){ W = stage.clientWidth; H = stage.clientHeight; setViewBox(); redraw(); }
-  window.addEventListener('resize', resize);
-
-  function load() { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; } }
-  const normalizeName = s => s.normalize('NFKC').replace(/\s+/g,' ').trim();
-  const keyName = s => normalizeName(s).toLowerCase();
-
-  function wordsFromDonors() {
-    const size = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--base-size')) || 28;
-    const list = load().slice().sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}));
-    return list.map(d => ({ text: d.name, key: keyName(d.name), size }));
-  }
-
-  let prevPos = new Map();
-
-  function dynamicPadding(d) {
-    const base = Math.max(6, Math.round(d.size * 0.25));
-    const extra = Math.min(20, Math.floor(d.text.length * 0.6));
-    return base + extra;
-  }
-
-  function emphasizeOnce(nameKey) {
-    const node = svg.selectAll('text.word').filter(function(){ return this.textContent && nameKey === keyName(this.textContent); });
-    if (!node.size()) return;
-    node.each(function(){ this.parentNode.appendChild(this); });
-    node.transition().duration(250)
-      .attr('transform', function() {
-        const t = this.getAttribute('transform');
-        return t + ' scale(1.4)';
-      })
-      .transition().duration(500)
-      .attr('transform', function() {
-        const p = prevPos.get(nameKey);
-        return 'translate(' + p.x + ',' + p.y + ') rotate(' + p.rotate + ')';
-      });
-  }
-
-  function redraw() {
-    const CENTERX = W/2, CENTERY = H/2;
-    const words = wordsFromDonors();
-    const layer = svg.selectAll('g.words').data([null]).join('g').attr('class','words');
-    const streamed = new Set();
-
-    const cloud = d3.layout.cloud()
-      .size([W, H])
-      .words(words)
-      .padding(dynamicPadding)
-      .font('system-ui, sans-serif')
-      .fontSize(d => d.size)
-      .rotate(() => 0)
-      .timeInterval(10)
-      .on('word', d => {
-        const k = keyName(d.text);
-        if (streamed.has(k)) return;
-        streamed.add(k);
-        const pos = { x: d.x + CENTERX, y: d.y + CENTERY, rotate: d.rotate || 0, size: d.size };
-
-        let node = layer.selectAll('text.word').filter(function(){ return this.textContent === d.text; });
-        if (!node.size()) {
-          node = layer.append('text')
-            .attr('class', 'word')
-            .style('font-family', 'system-ui, sans-serif')
-            .text(d.text)
-            .attr('text-anchor', 'middle')
-            .attr('dominant-baseline', 'middle')
-            .style('opacity', 0)
-            .attr('font-size', (prevPos.get(k) && prevPos.get(k).size) || d.size)
-            .attr('transform', () => {
-              const p = prevPos.get(k);
-              const x0 = p ? p.x : CENTERX, y0 = p ? p.y : CENTERY, r0 = p ? p.rotate : 0;
-              return 'translate(' + x0 + ',' + y0 + ') rotate(' + r0 + ')';
-            });
-        }
-        node.transition().duration(500)
-          .style('opacity', 1)
-          .attr('font-size', pos.size)
-          .attr('transform', 'translate(' + pos.x + ',' + pos.y + ') rotate(' + pos.rotate + ')');
-      })
-      .on('end', placed => {
-        const nextPos = new Map();
-        placed.forEach(d => nextPos.set(keyName(d.text), { x: d.x + CENTERX, y: d.y + CENTERY, rotate: d.rotate || 0, size: d.size }));
-
-        const sel = layer.selectAll('text.word').data(placed, function(d){ return d ? d.text : this.textContent; });
-
-        sel.exit().transition().duration(400).style('opacity', 0).remove();
-
-        const enter = sel.enter().append('text')
-          .attr('class', 'word')
-          .style('font-family', 'system-ui, sans-serif')
-          .text(d => d.text)
-          .attr('text-anchor', 'middle')
-          .attr('dominant-baseline', 'middle')
-          .style('opacity', 0)
-          .attr('font-size', d => (prevPos.get(keyName(d.text))?.size || d.size))
-          .attr('transform', function(){
-            const p = prevPos.get(keyName(this.textContent));
-            const x0 = p ? p.x : CENTERX, y0 = p ? p.y : CENTERY, r0 = p ? p.rotate : 0;
-            return 'translate(' + x0 + ',' + y0 + ') rotate(' + r0 + ')';
-          });
-
-        enter.merge(sel)
-          .transition().duration(700)
-          .style('opacity', 1)
-          .attr('font-size', d => d.size)
-          .attr('transform', d => {
-            const p = nextPos.get(keyName(d.text));
-            return 'translate(' + p.x + ',' + p.y + ') rotate(' + p.rotate + ')';
-          });
-
-        prevPos = nextPos;
-      });
-
-    cloud.start();
-  }
-
-  function fullRender() { prevPos.clear(); redraw(); }
-
-  CH.onmessage = (ev) => {
-    const msg = ev.data || {};
-    if (msg.type === 'added' && Array.isArray(msg.donors)) redraw();
-    else if (msg.type === 'reset') {
-      svg.selectAll('*').remove();
-      fullRender();
-    }
-    else if (msg.type === 'emphasize' && msg.name) {
-      emphasizeOnce(keyName(msg.name));
-    }
-    else if (msg.type === 'remove' && msg.key) {
-      redraw();
-    }
-  };
-
-  window.addEventListener('storage', (e) => { if (e.key === KEY) redraw(); });
-
-  setViewBox();
-  fullRender();
+(()=>{
+const KEY='donorList.v1';const CH=new BroadcastChannel('donors');
+const svg=d3.select('#cloud');const stage=document.getElementById('stage');
+let W=stage.clientWidth,H=stage.clientHeight;
+function setViewBox(){svg.attr('viewBox','0 0 '+W+' '+H);}function resize(){W=stage.clientWidth;H=stage.clientHeight;setViewBox();redraw();}window.addEventListener('resize',resize);
+function load(){try{return JSON.parse(localStorage.getItem(KEY))||[]}catch{return[];}}
+const normalizeName=s=>s.normalize('NFKC').replace(/\s+/g,' ').trim();
+const keyName=s=>normalizeName(s).toLowerCase();
+function wordsFromDonors(){const size=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--base-size'))||28;const list=load().slice().sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'}));return list.map(d=>({text:d.name,key:keyName(d.name),size}));}
+let prevPos=new Map();const emphasized=new Set();
+function dynamicPadding(d){return Math.max(10,Math.round(d.size*0.35))+Math.min(28,Math.floor(d.text.length*0.8));}
+function hiDpiCanvas(){const ratio=(window.devicePixelRatio||1);const c=document.createElement('canvas');c.width=Math.round(256*ratio);c.height=Math.round(256*ratio);const ctx=c.getContext('2d');ctx.setTransform(ratio,0,0,ratio,0,0);return c;}
+function relaxPositions(nextPos){const keys=Array.from(nextPos.keys());const nodes=keys.map(k=>({key:k,...nextPos.get(k)}));const size=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--base-size'))||28;nodes.forEach(n=>{const textLen=n.key.length;n.w=Math.max(40,textLen*size*0.6)+10;n.h=size*1.4+6;});for(let p=0;p<3;p++){for(let i=0;i<nodes.length;i++){for(let j=i+1;j<nodes.length;j++){const a=nodes[i],b=nodes[j];if(Math.abs(a.x-b.x)>(a.w+b.w)/2||Math.abs(a.y-b.y)>(a.h+b.h)/2)continue;const dx=(a.x-b.x)||(Math.random()-.5);const dy=(a.y-b.y)||(Math.random()-.5);const dist=Math.hypot(dx,dy)||1;const push=4;const ux=dx/dist,uy=dy/dist;a.x+=ux*push;a.y+=uy*push;b.x-=ux*push;b.y-=uy*push;a.x=Math.max(a.w/2,Math.min(W-a.w/2,a.x));a.y=Math.max(a.h/2,Math.min(H-a.h/2,a.y));b.x=Math.max(b.w/2,Math.min(W-b.w/2,b.x));b.y=Math.max(b.h/2,Math.min(H-b.h/2,b.y));}}}nodes.forEach(n=>nextPos.set(n.key,{x:n.x,y:n.y,rotate:n.rotate||0,size:n.size}));return nextPos;}
+function toggleEmphasize(nameKey){const node=svg.selectAll('text.word').filter(function(){return this.textContent&&nameKey===keyName(this.textContent);});if(!node.size())return;if(emphasized.has(nameKey)){emphasized.delete(nameKey);node.classed('emph',false).transition().duration(400).attr('transform',d=>{const p=prevPos.get(nameKey);return`translate(${p.x},${p.y}) rotate(${p.rotate}) scale(1)`;}).style('font-weight','normal');}else{emphasized.add(nameKey);node.each(function(){this.parentNode.appendChild(this);});node.classed('emph',true).transition().duration(400).attr('transform',d=>{const p=prevPos.get(nameKey);return`translate(${p.x},${p.y}) rotate(${p.rotate}) scale(1.4)`;}).style('font-weight','700');}}
+function redraw(){const CENTERX=W/2,CENTERY=H/2;const words=wordsFromDonors();const layer=svg.selectAll('g.words').data([null]).join('g').attr('class','words');const streamed=new Set();const cloud=d3.layout.cloud().canvas(hiDpiCanvas).size([W,H]).words(words).padding(dynamicPadding).font('system-ui,sans-serif').fontSize(d=>d.size).rotate(()=>0).timeInterval(10).on('word',d=>{const k=keyName(d.text);if(streamed.has(k))return;streamed.add(k);const pos={x:d.x+CENTERX,y:d.y+CENTERY,rotate:d.rotate||0,size:d.size};let node=layer.selectAll('text.word').filter(function(){return this.textContent===d.text;});if(!node.size()){node=layer.append('text').attr('class','word').text(d.text).attr('text-anchor','middle').attr('dominant-baseline','middle').style('opacity',0).attr('font-size',(prevPos.get(k)&&prevPos.get(k).size)||d.size).attr('transform',()=>{const p=prevPos.get(k);const x0=p?p.x:CENTERX,y0=p?p.y:CENTERY,r0=p?p.rotate:0;return'translate('+x0+','+y0+') rotate('+r0+')';});}node.transition().duration(500).style('opacity',1).attr('font-size',pos.size).attr('transform','translate('+pos.x+','+pos.y+') rotate('+pos.rotate+')');}).on('end',placed=>{let nextPos=new Map();placed.forEach(d=>nextPos.set(keyName(d.text),{x:d.x+CENTERX,y:d.y+CENTERY,rotate:d.rotate||0,size:d.size}));nextPos=relaxPositions(nextPos);const sel=layer.selectAll('text.word').data(placed,d=>d?d.text:this.textContent);sel.exit().transition().duration(400).style('opacity',0).remove();const enter=sel.enter().append('text').attr('class','word').text(d=>d.text).attr('text-anchor','middle').attr('dominant-baseline','middle').style('opacity',0).attr('font-size',d=>(prevPos.get(keyName(d.text))?.size||d.size)).attr('transform',function(){const p=prevPos.get(keyName(this.textContent));const x0=p?p.x:CENTERX,y0=p?p.y:CENTERY,r0=p?p.rotate:0;return'translate('+x0+','+y0+') rotate('+r0+')';});enter.merge(sel).transition().duration(700).style('opacity',1).attr('font-size',d=>d.size).attr('transform',d=>{const p=nextPos.get(keyName(d.text));return'translate('+p.x+','+p.y+') rotate('+p.rotate+')';});prevPos=nextPos;emphasized.forEach(k=>{const p=prevPos.get(k);if(p){svg.selectAll('text.word').filter(function(){return keyName(this.textContent)===k;}).classed('emph',true).attr('transform',`translate(${p.x},${p.y}) rotate(${p.rotate}) scale(1.4)`).style('font-weight','700');}});});cloud.start();}
+function fullRender(){prevPos.clear();redraw();}
+CH.onmessage=ev=>{const msg=ev.data||{};if(msg.type==='added'&&Array.isArray(msg.donors))redraw();else if(msg.type==='reset'){svg.selectAll('*').remove();fullRender();}else if(msg.type==='emphasize'&&msg.name){toggleEmphasize(keyName(msg.name));}else if(msg.type==='remove'&&msg.key){redraw();}};window.addEventListener('storage',e=>{if(e.key===KEY)redraw();});setViewBox();fullRender();
 })();
-</script>
-</body>
-</html>
+</script></body></html>
