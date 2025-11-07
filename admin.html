@@ -19,59 +19,94 @@
 </head>
 <body>
   <h1>Donor Board – Admin</h1>
+
   <div class="row">
     <button id="openDisplay">Open Display Page</button>
     <button id="clearAll" title="Remove all donors (affects display)">Clear All</button>
     <span class="muted">Paste names (one per line) or comma-separate; duplicates are ignored (case-insensitive, trimmed).</span>
   </div>
+
   <p></p>
   <textarea id="nameInput" placeholder="e.g.
 Jane Smith
 John D. Brown, Alicia Cruz
 The Morales Family"></textarea>
-  <p class="row"><button class="primary" id="addNames">Add Names</button></p>
+  <p class="row">
+    <button class="primary" id="addNames">Add Names</button>
+  </p>
+
   <h3>Current donors (<span id="count">0</span>)</h3>
   <div id="chips"></div>
+
 <script>
 (() => {
   const KEY = 'donorList.v1';
   const CH = new BroadcastChannel('donors');
-  const $ = s => document.querySelector(s);
+  const $ = sel => document.querySelector(sel);
+
   const normalizeName = s => s.normalize('NFKC').replace(/\s+/g,' ').trim();
   const keyName = s => normalizeName(s).toLowerCase();
   const load = () => JSON.parse(localStorage.getItem(KEY) || '[]');
   const save = list => localStorage.setItem(KEY, JSON.stringify(list));
-  function renderChips(){
-    const list=load();
-    $('#count').textContent=list.length;
-    $('#chips').innerHTML=list.sort((a,b)=>a.name.localeCompare(b.name, undefined, {sensitivity:'base'}))
-      .map(d=>`<span class="pill" title="${new Date(d.addedAt).toLocaleString()}">${d.name}</span>`).join('');
+
+  function renderChips() {
+    const list = load();
+    $('#count').textContent = list.length;
+    $('#chips').innerHTML = list
+      .sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}))
+      .map(d => `<span class="pill" title="${new Date(d.addedAt).toLocaleString()}">${d.name}</span>`).join('');
   }
-  function addFromInput(){
-    const raw=$('#nameInput').value;
-    const parts=raw.split(/\n|,/g).map(normalizeName).filter(Boolean);
-    if(!parts.length)return;
-    const list=load();
-    const existing=new Set(list.map(d=>keyName(d.name)));
-    const newOnes=[];
-    for(const nm of parts){
-      const k=keyName(nm);
-      if(!existing.has(k)){
+
+  function addFromInput() {
+    const raw = $('#nameInput').value;
+    const parts = raw.split(/\n|,/g).map(normalizeName).filter(Boolean);
+    if (!parts.length) return;
+
+    const list = load();
+    const existing = new Set(list.map(d => keyName(d.name)));
+    const newOnes = [];
+
+    for (const nm of parts) {
+      const k = keyName(nm);
+      if (!existing.has(k)) {
         existing.add(k);
-        const rec={name:nm,id:(crypto?.randomUUID?.()||Math.random().toString(36).slice(2)),addedAt:Date.now()};
-        list.push(rec);newOnes.push(rec);
+        const rec = { name: nm, id: (crypto?.randomUUID?.() || Math.random().toString(36).slice(2)), addedAt: Date.now() };
+        list.push(rec);
+        newOnes.push(rec);
       }
     }
-    if(newOnes.length){save(list);CH.postMessage({type:'added',donors:newOnes});renderChips();}
-    $('#nameInput').value='';
+
+    if (newOnes.length) {
+      save(list);
+      CH.postMessage({ type:'added', donors: newOnes });
+      renderChips();
+    }
+
+    $('#nameInput').value = '';
     $('#nameInput').focus();
   }
-  function clearAll(){if(!confirm('Clear all donors?'))return;save([]);CH.postMessage({type:'reset'});renderChips();}
-  $('#addNames').onclick=addFromInput;
-  $('#clearAll').onclick=clearAll;
-  $('#openDisplay').onclick=()=>window.open('display.html','DonorDisplay','noopener,noreferrer');
-  window.addEventListener('storage',e=>{if(e.key===KEY)renderChips();});
+
+  function clearAll() {
+    if (!confirm('Clear all donors? This will immediately update the display.')) return;
+    save([]);
+    localStorage.removeItem('donorPositions.v1'); // clear positions cache on reset
+    CH.postMessage({ type:'reset' });
+    renderChips();
+  }
+
+  $('#addNames').addEventListener('click', addFromInput);
+  $('#clearAll').addEventListener('click', clearAll);
+  $('#openDisplay').addEventListener('click', () => window.open('display.html', 'DonorDisplay', 'noopener,noreferrer'));
+  $('#nameInput').addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') addFromInput();
+  });
+
+  window.addEventListener('storage', (e) => {
+    if (e.key === KEY) renderChips();
+  });
+
   renderChips();
 })();
 </script>
-</body></html>
+</body>
+</html>

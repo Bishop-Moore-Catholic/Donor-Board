@@ -3,191 +3,188 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Donor Board – Display (d3-cloud)</title>
+<title>Donor Board – Display (incremental)</title>
 <link rel="icon" href="assets/favicon.svg">
-<script src="https://unpkg.com/d3@7"></script>
-<script src="https://unpkg.com/d3-cloud/build/d3.layout.cloud.js"></script>
 <style>
-  :root {
-    --base-size: clamp(18px, 2.2vw, 36px); /* uniform final size */
-    --in-scale: 2.1;                       /* pop-in scale */
-    --gap: 12px;
-  }
+  :root { --base-size: clamp(18px, 2.2vw, 36px); --padding: 8; }
   html, body { height:100%; margin:0; background:#fafafa; color:#111; font-family: system-ui, sans-serif; overflow:hidden; }
   header { padding:16px 20px 8px; font-weight:600; letter-spacing:.5px; }
-  #stage { position: relative; width: 100vw; height: calc(100vh - 48px); }
+  #stage { width:100vw; height: calc(100vh - 48px); }
   svg { width:100%; height:100%; display:block; }
-  .word { font-size: var(--base-size); fill:#111; dominant-baseline: middle; text-anchor: middle; }
-  .word.new { transform-origin: center center; transform-box: fill-box; animation: pop 3.6s ease-out both; }
-  @keyframes pop {
-    0% { transform: scale(var(--in-scale)); opacity: 0; }
-    10% { opacity: 1; }
-    100% { transform: scale(1); opacity: 1; }
-  }
-  /* 300x300 centerpiece placeholder, above the SVG but click-through */
-  #centerpiece {
-    position:absolute; left:50%; top:50%;
-    width:300px; height:300px; margin-left:-150px; margin-top:-150px;
-    display:grid; place-items:center;
-    pointer-events:none;
-  }
-  #centerpiece img { width:300px; height:300px; object-fit:contain; border-radius:10px; }
+  .word { font-size: var(--base-size); dominant-baseline: middle; text-anchor: middle; fill:#111; }
+  .word.new { transform-origin: center center; transform-box: fill-box; animation: pop 3.2s ease-out both; }
+  @keyframes pop { 0% { transform: scale(2.0); opacity: 0; } 10% { opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
 </style>
 </head>
 <body>
 <header>Thank you to our generous donors</header>
 <div id="stage">
-  <svg id="cloud" aria-label="Donor word cloud"></svg>
-  <div id="centerpiece">
-    <img id="centerImage" alt="Centerpiece 300×300" src="data:image/svg+xml;utf8,<?xml version='1.0' encoding='UTF-8'?><svg xmlns='http://www.w3.org/2000/svg' width='300' height='300' viewBox='0 0 300 300'><rect width='300' height='300' fill='%23f5f5f5'/><rect x='1.5' y='1.5' width='297' height='297' fill='none' stroke='%23cccccc' stroke-width='3' stroke-dasharray='10 8'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-family='system-ui, sans-serif' font-size='18' fill='%23999'>300×300 Placeholder</text></svg>" />
-  </div>
+  <svg id="cloud" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" aria-label="Donor word cloud"></svg>
 </div>
 
 <script>
 (() => {
   const KEY = 'donorList.v1';
+  const POS_KEY = 'donorPositions.v1';
   const CH = new BroadcastChannel('donors');
-  const svg = d3.select('#cloud');
+  const svg = document.getElementById('cloud');
   const stage = document.getElementById('stage');
+
   let W = stage.clientWidth, H = stage.clientHeight;
-  const CENTER = { x: W/2, y: H/2 };
-  const CENTER_RECT = { x: CENTER.x - 150, y: CENTER.y - 150, w: 300, h: 300 };
+  function resize(){
+    W = stage.clientWidth; H = stage.clientHeight;
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  }
+  window.addEventListener('resize', resize);
 
-  const present = new Map(); // nameKey -> true
+  // Text measurement via canvas (fast + consistent)
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  function basePx(){
+    const cs = getComputedStyle(document.documentElement).getPropertyValue('--base-size').trim();
+    if (!cs) return 24;
+    if (cs.endsWith('px')) return parseFloat(cs);
+    // rough fallback for vw clamp: sample 2% of width
+    return Math.max(18, Math.min(36, Math.round(window.innerWidth * 0.022)));
+  }
+  function measure(text){
+    const size = basePx();
+    ctx.font = `${size}px system-ui, sans-serif`;
+    const w = ctx.measureText(text).width;
+    const h = size * 1.15;
+    const pad = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--padding')) || 8;
+    return { w: w + pad*2, h: h + pad*2, size };
+  }
 
-  function load() {
-    try { return JSON.parse(localStorage.getItem(KEY)) || []; }
-    catch { return []; }
+  // Positions cache
+  function loadPositions(){
+    try { return JSON.parse(localStorage.getItem(POS_KEY)) || {}; } catch { return {}; }
+  }
+  function savePositions(map){
+    localStorage.setItem(POS_KEY, JSON.stringify(map));
+  }
+
+  // Donors
+  function loadDonors(){
+    try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; }
   }
   const normalizeName = s => s.normalize('NFKC').replace(/\s+/g,' ').trim();
   const keyName = s => normalizeName(s).toLowerCase();
 
-  function resize(){
-    W = stage.clientWidth; H = stage.clientHeight;
-    svg.attr('viewBox', `0 0 ${W} ${H}`);
-  }
-  window.addEventListener('resize', () => { resize(); layout(); });
-
-  function inCenter(x, y, w, h) {
-    const r = CENTER_RECT;
-    return !(x + w/2 < r.x || x - w/2 > r.x + r.w || y + h/2 < r.y || y - h/2 > r.y + r.h) ;
+  // Overlap check
+  const placed = []; // {x,y,w,h,key,text}
+  function overlaps(a,b){
+    return !(a.x + a.w/2 <= b.x - b.w/2 ||
+             a.x - a.w/2 >= b.x + b.w/2 ||
+             a.y + a.h/2 <= b.y - b.h/2 ||
+             a.y - a.h/2 >= b.y + b.h/2);
   }
 
-  function nudgeOutOfCenter(word) {
-    // push any word whose bbox overlaps the center rect outward along its vector from center
-    const r = CENTER_RECT;
-    const dirX = word.x - CENTER.x;
-    const dirY = word.y - CENTER.y;
-    const len = Math.max(1, Math.hypot(dirX, dirY));
-    const ux = dirX / len, uy = dirY / len;
-    let x = word.x, y = word.y;
-    const halfW = word.width/2, halfH = word.height/2;
+  // Spiral search from center; find first non-overlapping spot
+  function findSpot(rect){
+    const cx = W/2, cy = H/2;
+    let angle = 0, radius = 0;
+    const step = 6;        // px per spiral step
+    const angleStep = Math.PI / 24; // 7.5°
+    let safety = 0, maxR = Math.hypot(W, H);
 
-    let safety = 0;
-    while (inCenter(x, y, word.width, word.height) && safety < 600) {
-      x += ux * 6; y += uy * 6;
+    while (radius < maxR && safety < 20000){
+      const x = cx + Math.cos(angle) * radius;
+      const y = cy + Math.sin(angle) * radius;
+
+      // keep fully inside bounds
+      if (x - rect.w/2 >= 0 && x + rect.w/2 <= W && y - rect.h/2 >= 0 && y + rect.h/2 <= H) {
+        let ok = true;
+        for (let i=0;i<placed.length;i++){
+          if (overlaps({x,y,w:rect.w,h:rect.h}, placed[i])) { ok = false; break; }
+        }
+        if (ok) return {x,y};
+      }
+      angle += angleStep;
+      radius += step * angleStep / (2*Math.PI) * 20; // increases slowly
       safety++;
     }
-    word.x = x; word.y = y;
+    // fallback: center (may overlap if too dense)
+    return { x: Math.max(rect.w/2, Math.min(W-rect.w/2, cx)), y: Math.max(rect.h/2, Math.min(H-rect.h/2, cy)) };
   }
 
-  function layout(newNameSet = new Set()) {
-    const list = load();
-    const names = list.map(d => d.name);
-    // Use equal sizes so the end state is uniform
-    const baseSizePx = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--base-size')) || 28;
-
-    // Build words array for d3-cloud
-    const words = names.map(n => ({ text: n, size: baseSizePx }));
-
-    // d3-cloud layout
-    const cloud = d3.layout.cloud()
-      .size([W, H])
-      .words(words)
-      .padding(4)
-      .font('system-ui, sans-serif')
-      .fontSize(d => d.size)
-      .rotate(() => 0) // keep level for readability
-      .spiral('archimedean')
-      .on('end', draw);
-
-    cloud.start();
-
-    function draw(wds) {
-      // Estimate text bbox width/height for centering logic (approx via canvas-measured by d3-cloud: d.x,d.y are centers)
-      // d3-cloud gives: x, y (center), and has sprite/bbox dims via d.width/d.height if built with canvas sprite.
-      // Some builds expose width/height; if not, approximate with size * char count factor.
-      wds.forEach(d => {
-        if (!('width' in d) || !('height' in d)) {
-          const approxW = d.text.length * d.size * 0.6;
-          const approxH = d.size * 1.2;
-          d.width = approxW; d.height = approxH;
-        }
-        // Avoid the center 300x300 by nudging
-        if (inCenter(d.x, d.y, d.width, d.height)) nudgeOutOfCenter(d);
-      });
-
-      // DATA JOIN
-      const g = svg.selectAll('g.words').data([null]);
-      g.enter().append('g').attr('class','words');
-      const layer = svg.select('g.words');
-
-      const sel = layer.selectAll('text.word').data(wds, d => d.text);
-
-      // EXIT
-      sel.exit().remove();
-
-      // ENTER
-      const enter = sel.enter().append('text')
-        .attr('class', d => 'word' + (newNameSet.has(keyName(d.text)) ? ' new' : ''))
-        .style('font-family', 'system-ui, sans-serif')
-        .text(d => d.text)
-        .attr('text-anchor', 'middle')
-        .attr('dominant-baseline', 'middle')
-        .attr('transform', d => `translate(${CENTER.x},${CENTER.y})`)
-        .style('opacity', 0);
-
-      // ENTER + UPDATE
-      enter.merge(sel)
-        .transition()
-        .duration(1200)
-        .attr('transform', d => `translate(${d.x + W/2},${d.y + H/2})`)
-        .style('opacity', 1);
+  // Draw / update a single word at (x,y)
+  function drawWord(text, x, y, isNew){
+    const size = basePx();
+    const key = keyName(text);
+    let node = svg.querySelector(`text[data-key="${CSS.escape(key)}"]`);
+    if (!node){
+      node = document.createElementNS('http://www.w3.org/2000/svg','text');
+      node.setAttribute('class', 'word' + (isNew ? ' new' : ''));
+      node.setAttribute('data-key', key);
+      node.setAttribute('text-anchor','middle');
+      node.setAttribute('dominant-baseline','middle');
+      node.textContent = text;
+      svg.appendChild(node);
+      // ensure animation class is applied after insertion for reliable start
+      if (isNew){
+        requestAnimationFrame(() => { node.classList.add('new'); });
+      }
     }
+    node.setAttribute('x', x.toFixed(1));
+    node.setAttribute('y', y.toFixed(1));
+    node.setAttribute('font-size', size);
   }
 
-  function fullRender() {
+  // Initial render: keep prior positions if available; only place missing ones
+  function fullRender(){
     resize();
-    present.clear();
-    const list = load();
-    for (const d of list) present.set(keyName(d.name), true);
-    layout(); // no special "new" animations on initial load
+    const donors = loadDonors().sort((a,b)=>a.name.localeCompare(b.name, undefined, {sensitivity:'base'}));
+    const posMap = loadPositions();
+    placed.length = 0;
+    svg.innerHTML = ''; // clear all
+
+    for (const d of donors){
+      const key = keyName(d.name);
+      const m = measure(d.name);
+      let pos = posMap[key];
+      if (!pos || isNaN(pos.x) || isNaN(pos.y)){
+        pos = findSpot({w:m.w,h:m.h});
+        posMap[key] = pos;
+      }
+      placed.push({x:pos.x,y:pos.y,w:m.w,h:m.h,key,text:d.name});
+      drawWord(d.name, pos.x, pos.y, /*isNew*/ false);
+    }
+    savePositions(posMap);
   }
 
-  function addNew(donors) {
-    const newSet = new Set(donors.map(d => keyName(d.name)));
-    // Re-layout using the "new" set so those nodes get the .new class (pop animation)
-    layout(newSet);
-    // track present
-    donors.forEach(d => present.set(keyName(d.name), true));
+  // Add only new donors incrementally (no reshuffle)
+  function addNew(donors){
+    const posMap = loadPositions();
+    const sorted = donors.map(d => d.name).sort((a,b)=>a.localeCompare(b, undefined, {sensitivity:'base'}));
+    for (const name of sorted){
+      const key = keyName(name);
+      if (placed.find(p => p.key === key)) continue; // already there
+      const m = measure(name);
+      const spot = findSpot({w:m.w,h:m.h});
+      placed.push({x:spot.x,y:spot.y,w:m.w,h:m.h,key,text:name});
+      posMap[key] = spot;
+      drawWord(name, spot.x, spot.y, /*isNew*/ true);
+    }
+    savePositions(posMap);
   }
 
-  // BroadcastChannel listeners
+  // Listen to updates
   CH.onmessage = (ev) => {
     const msg = ev.data || {};
     if (msg.type === 'added' && Array.isArray(msg.donors)) addNew(msg.donors);
-    else if (msg.type === 'reset') fullRender();
+    else if (msg.type === 'reset') {
+      localStorage.removeItem(POS_KEY);
+      fullRender();
+    }
   };
 
-  window.addEventListener('storage', (e) => { if (e.key === KEY) fullRender(); });
+  window.addEventListener('storage', (e) => {
+    if (e.key === KEY) fullRender();
+  });
 
-  // Initial render
+  // Boot
   fullRender();
-
-  // Optional ?img= URL parameter
-  const params = new URLSearchParams(location.search);
-  const img = params.get('img');
-  if (img) document.getElementById('centerImage').src = img;
 })();
 </script>
 </body>
