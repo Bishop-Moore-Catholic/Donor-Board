@@ -6,6 +6,7 @@
 <title>Donor Board – Admin</title>
 <link rel="icon" href="assets/favicon.svg">
 <link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 </head>
 <body>
   <div class="page" style="padding:24px; font-family: system-ui, sans-serif;">
@@ -14,7 +15,7 @@
     <div class="row" style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
       <button id="openDisplay" type="button">Open Display Page</button>
       <button id="clearAll" type="button" title="Remove all donors (affects display)">Clear All</button>
-      <span style="color:#666; font-size:13px;">Paste names (newline, comma, or tab-separated). Add '+' anywhere in a name to auto‑emphasize it. Duplicates are ignored.</span>
+      <span style="color:#666; font-size:13px;">Paste names (newline, comma, or tab‑separated). Add '+' anywhere in a name to auto‑emphasize it. Duplicates are ignored.</span>
     </div>
 
     <p></p>
@@ -25,36 +26,26 @@ The +Morales Family"></textarea>
       <button class="primary" id="addNames" type="button">Add Names</button>
     </p>
 
-    <div class="admin-chips">
-      <h3>Current donors (<span id="count">0</span>)</h3>
-      <div id="chips"></div>
+    <!-- CSV IMPORT -->
+    <div class="import-wrap">
+      <label class="dropzone" id="dropzone">
+        <input type="file" id="csvInput" accept=".csv,text/csv" />
+        <div>
+          <strong>Drop a OneCause CSV here</strong><br/>
+          <span class="hint">We’ll import <code>Column M</code> (names) and auto‑emphasize anyone with <code>Column B ≥ threshold</code>.</span><br/>
+          <button type="button" id="browseBtn" style="margin-top:8px;">Browse…</button>
+        </div>
+      </label>
+      <div class="controls">
+        <div class="field"><label for="threshold"><strong>Emphasize threshold ($)</strong></label> <input type="number" id="threshold" min="0" step="50" value="1000"></div>
+        <div class="field"><span>Columns used:</span> <code>B (amount)</code> & <code>M (name)</code></div>
+        <div class="field"><button id="importPreview" type="button">Preview first 10</button> <button id="importAll" class="primary" type="button">Import all rows</button></div>
+      </div>
     </div>
 
-    <!-- THEME PANEL (Admin pushes to Display) -->
-    <div class="theme-panel" id="themePanel">
-      <h3>Display Theme (push to display)</h3>
-      <div class="theme-grid">
-        <div class="theme-row"><label>Background</label><input type="color" id="bgColor"></div>
-        <div class="theme-row"><label>Title color</label><input type="color" id="titleColor"></div>
-        <div class="theme-row"><label>Name color</label><input type="color" id="nameColor"></div>
-        <div class="theme-row"><label>Emphasized color</label><input type="color" id="emphColor"></div>
-        <div class="theme-row"><label>Name weight</label>
-          <select id="nameWeight">
-            <option>300</option><option selected>500</option><option>600</option><option>700</option><option>800</option>
-          </select>
-        </div>
-        <div class="theme-row"><label>Emph. weight</label>
-          <select id="emphWeight">
-            <option>600</option><option selected>800</option><option>900</option>
-          </select>
-        </div>
-        <div class="theme-row"><label>Emph. scale</label><input type="range" id="emphScale" min="1.0" max="1.8" step="0.05" value="1.35"></div>
-        <div class="theme-row"><label>Background image</label><input type="file" id="bgImage" accept="image/*"></div>
-      </div>
-      <div class="theme-actions">
-        <button id="resetTheme" type="button">Reset</button>
-        <button id="pushTheme" type="button">Apply & Push</button>
-      </div>
+    <div class="admin-chips" style="margin-top:16px;">
+      <h3>Current donors (<span id="count">0</span>)</h3>
+      <div id="chips"></div>
     </div>
   </div>
 
@@ -62,7 +53,6 @@ The +Morales Family"></textarea>
 (() => {
   const KEY = 'donorList.v1';
   const EMPH_KEY = 'donorEmphasized.v1';
-  const THEME_KEY = 'donorTheme.v1';
   const CH = new BroadcastChannel('donors');
 
   const $ = sel => document.querySelector(sel);
@@ -105,16 +95,12 @@ The +Morales Family"></textarea>
     const emphSet = loadEmph();
     const isEmph = emphSet.has(keyName(d.name));
     if (isEmph) chip.classList.add('emph');
-    if (isEmph) {
-      const b = document.createElement('div'); b.className = 'badge'; b.textContent = '★'; chip.appendChild(b);
-    }
+    if (isEmph) { const b = document.createElement('div'); b.className = 'badge'; b.textContent = '★'; chip.appendChild(b); }
 
-    // Dedicated handle to open menu
     const handle = document.createElement('button');
     handle.className = 'handle'; handle.type = 'button'; handle.setAttribute('aria-label', 'Open actions'); handle.innerHTML = '&#8942;';
     chip.appendChild(handle);
 
-    // Menu
     const menu = document.createElement('div'); menu.className = 'menu';
     const emph = document.createElement('button');
     emph.className = 'action-btn'; emph.type = 'button'; emph.setAttribute('data-act','emph'); emph.title = isEmph ? 'Un‑emphasize' : 'Emphasize';
@@ -164,8 +150,8 @@ The +Morales Family"></textarea>
     }
 
     if (newOnes.length) {
-      localStorage.setItem(KEY, JSON.stringify(list));
-      localStorage.setItem(EMPH_KEY, JSON.stringify(Array.from(emphSet)));
+      save(list);
+      saveEmph(emphSet);
       CH.postMessage({ type:'added', donors: newOnes });
       for (const rec of newOnes) {
         const k = keyName(rec.name);
@@ -187,107 +173,124 @@ The +Morales Family"></textarea>
     renderChips();
   }
 
-  // Event delegation for chips container
+  // --- CSV IMPORT LOGIC ---
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('csvInput');
+  const browseBtn = document.getElementById('browseBtn');
+  const importPreview = document.getElementById('importPreview');
+  const importAll = document.getElementById('importAll');
+  const thresholdEl = document.getElementById('threshold');
+
+  let parsedRows = null; // cached
+
+  function handleFiles(files){
+    const file = files && files[0];
+    if (!file) return;
+    Papa.parse(file, {
+      complete: (res) => {
+        parsedRows = Array.isArray(res.data) ? res.data : [];
+        console.log('[CSV] parsed rows:', parsedRows.length);
+        alert('CSV loaded: ' + parsedRows.length + ' rows.');
+      },
+      skipEmptyLines: 'greedy'
+    });
+  }
+
+  browseBtn.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+
+  ;['dragenter','dragover'].forEach(ev => dropzone.addEventListener(ev, (e) => {
+    e.preventDefault(); e.stopPropagation(); dropzone.classList.add('dragover');
+  }));
+  ;['dragleave','drop'].forEach(ev => dropzone.addEventListener(ev, (e) => {
+    e.preventDefault(); e.stopPropagation(); dropzone.classList.remove('dragover');
+  }));
+  dropzone.addEventListener('drop', (e) => { handleFiles(e.dataTransfer.files); });
+
+  function extractNameAmount(row){
+    // Expected: amount in column B (index 1), name in column M (index 12).
+    // Tolerate header row: if amount is non-numeric and name looks like a header, skip.
+    if (!row) return null;
+    const amountRaw = row[1];
+    const nameRaw = row[12];
+    const name = normalizeName(String(nameRaw || ''));
+    const amt = typeof amountRaw === 'number' ? amountRaw :
+                parseFloat(String(amountRaw || '').replace(/[^0-9.-]/g,''));
+    if (!name) return null;
+    if (!isFinite(amt) && /name|donor/i.test(String(nameRaw))) return null; // header guard
+    return { name, amount: isFinite(amt) ? amt : 0 };
+  }
+
+  function importRows(rows, preview=false){
+    if (!rows || !rows.length){ alert('No CSV loaded yet.'); return; }
+    const threshold = Number(thresholdEl.value) || 0;
+
+    const list = load();
+    const emphSet = loadEmph();
+    const existing = new Set(list.map(d => keyName(d.name)));
+    const newOnes = [];
+    let considered = 0, added = 0, emphasized = 0;
+
+    for (let i=0; i<rows.length; i++){
+      const rec = extractNameAmount(rows[i]);
+      if (!rec) continue;
+      considered++;
+      const k = keyName(rec.name);
+      if (!existing.has(k)){
+        if (preview) {
+          console.log('[Preview]', rec.name, 'amt:', rec.amount, 'emph:', rec.amount >= threshold);
+          if (newOnes.length < 10) newOnes.push({ name: rec.name, addedAt: Date.now() });
+          continue;
+        }
+        existing.add(k);
+        const d = { name: rec.name, id: (crypto?.randomUUID?.() || Math.random().toString(36).slice(2)), addedAt: Date.now() };
+        list.push(d); newOnes.push(d); added++;
+      }
+      if (rec.amount >= threshold) { emphSet.add(k); emphasized++; }
+    }
+
+    if (preview){
+      alert('Preview first 10 unique names logged to console. Considered rows: ' + considered);
+      return;
+    }
+
+    if (newOnes.length){
+      save(list);
+      saveEmph(emphSet);
+      CH.postMessage({ type:'added', donors: newOnes });
+      for (const d of newOnes) {
+        const k = keyName(d.name);
+        if (emphSet.has(k)) CH.postMessage({ type:'emphasize', name: d.name });
+      }
+      renderChips();
+    }
+    alert('Import complete. Considered: '+considered+', Added: '+added+', Emphasized (>= $'+threshold+'): '+emphasized);
+  }
+
+  importPreview.addEventListener('click', () => importRows(parsedRows, true));
+  importAll.addEventListener('click', () => importRows(parsedRows, false));
+
+  // Event delegation for chips container (menu/handle)
   chipsEl.addEventListener('click', (e) => {
     const btn = e.target.closest('button');
     const chip = e.target.closest('.chip');
     if (!chip) return;
 
     if (btn && btn.classList.contains('handle')) {
-      // open/close this chip's menu; close others
       document.querySelectorAll('.chip.menu-open').forEach(el => { if (el !== chip) el.classList.remove('menu-open'); });
       chip.classList.toggle('menu-open');
-      console.log('[chips] toggle menu for', chip.dataset.name, chip.classList.contains('menu-open'));
       return;
     }
-
     if (btn && btn.classList.contains('action-btn')) {
       const act = btn.getAttribute('data-act');
       const name = chip.dataset.name;
-      console.log('[chips] action', act, 'for', name);
       if (act === 'emph') toggleEmphasize(name);
       if (act === 'del') deleteName(name);
       chip.classList.remove('menu-open');
       return;
     }
   });
-
-  // Click outside to close any open menus
-  document.addEventListener('click', (e) => {
-    if (!e.target.closest('.chip')) {
-      document.querySelectorAll('.chip.menu-open').forEach(el => el.classList.remove('menu-open'));
-    }
-  });
-
-  // THEME PUSH (same as previous build)
-  const gcs = getComputedStyle(document.documentElement);
-  const defaults = {
-    bg: gcs.getPropertyValue('--bg').trim() || '#f7f7f7',
-    titleColor: gcs.getPropertyValue('--title-color').trim() || '#0f0f0f',
-    nameColor: gcs.getPropertyValue('--name-color').trim() || '#0f0f0f',
-    nameWeight: gcs.getPropertyValue('--name-weight').trim() || '500',
-    emphColor: gcs.getPropertyValue('--emph-color').trim() || '#0f0f0f',
-    emphWeight: gcs.getPropertyValue('--emph-weight').trim() || '800',
-    emphScale: parseFloat(gcs.getPropertyValue('--emph-scale')) || 1.35,
-  };
-  function loadTheme(){ try { return JSON.parse(localStorage.getItem(THEME_KEY) || 'null'); } catch { return null; } }
-  function saveTheme(theme){ localStorage.setItem(THEME_KEY, JSON.stringify(theme)); }
-
-  function initThemeUI(){
-    const bg = document.getElementById('bgColor');
-    const tcol = document.getElementById('titleColor');
-    const ncol = document.getElementById('nameColor');
-    const ecol = document.getElementById('emphColor');
-    const nwt = document.getElementById('nameWeight');
-    const ewt = document.getElementById('emphWeight');
-    const esc = document.getElementById('emphScale');
-    const bgi = document.getElementById('bgImage');
-
-    const saved = loadTheme() || defaults;
-    const toHex = (v)=> /^#/.test(v)?v.trim():('#'+Array.from((v.match(/\d+/g)||[]).slice(0,3)).map(n=>('0'+(+n).toString(16)).slice(-2)).join(''));
-
-    bg.value = toHex(saved.bg);
-    tcol.value = toHex(saved.titleColor);
-    ncol.value = toHex(saved.nameColor);
-    ecol.value = toHex(saved.emphColor);
-    nwt.value = String(saved.nameWeight);
-    ewt.value = String(saved.emphWeight);
-    esc.value = String(saved.emphScale);
-
-    document.getElementById('pushTheme').addEventListener('click', async () => {
-      const theme = {
-        bg: bg.value,
-        titleColor: tcol.value,
-        nameColor: ncol.value,
-        nameWeight: Number(nwt.value),
-        emphColor: ecol.value,
-        emphWeight: Number(ewt.value),
-        emphScale: parseFloat(esc.value),
-      };
-      if (bgi.files && bgi.files[0]) {
-        const dataUrl = await new Promise(res => { const fr = new FileReader(); fr.onload = e => res(e.target.result); fr.readAsDataURL(bgi.files[0]); });
-        theme.bgImageData = dataUrl;
-      } else {
-        const cur = loadTheme(); if (cur && cur.bgImageData) theme.bgImageData = cur.bgImageData;
-      }
-      saveTheme(theme);
-      CH.postMessage({ type: 'themeUpdate', theme });
-      console.log('[theme] pushed', theme);
-    });
-
-    document.getElementById('resetTheme').addEventListener('click', () => {
-      localStorage.removeItem(THEME_KEY);
-      CH.postMessage({ type: 'themeUpdate', theme: defaults });
-      console.log('[theme] reset to defaults');
-      bg.value = toHex(defaults.bg); tcol.value = toHex(defaults.titleColor);
-      ncol.value = toHex(defaults.nameColor); ecol.value = toHex(defaults.emphColor);
-      nwt.value = String(defaults.nameWeight); ewt.value = String(defaults.emphWeight); esc.value = String(defaults.emphScale);
-      bgi.value='';
-    });
-
-    // Push once on load to sync display if needed
-    if (saved) CH.postMessage({ type: 'themeUpdate', theme: saved });
-  }
+  document.addEventListener('click', (e) => { if (!e.target.closest('.chip')) document.querySelectorAll('.chip.menu-open').forEach(el => el.classList.remove('menu-open')); });
 
   // Wire basics
   document.getElementById('addNames').addEventListener('click', addFromInput);
@@ -297,7 +300,6 @@ The +Morales Family"></textarea>
   window.addEventListener('storage', (e) => { if (e.key === KEY || e.key === EMPH_KEY) renderChips(); });
 
   renderChips();
-  initThemeUI();
 })();
 </script>
 </body>
