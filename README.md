@@ -1,7 +1,8 @@
-# Donor Board (d3-cloud streaming updates)
+# Donor Board (d3-cloud streaming — FIXED)
 
-- `display.html` streams words in during layout via the d3-cloud **`word`** event, then does a gentle reconcile on **`end`** so redraws aren't jarring.
-- `admin.html` accepts newline, comma, and tab separated names; deduped case-insensitively.
+Fixes:
+- **Admin**: Template literals now evaluate correctly; chips show actual names (no `${...}`).
+- **Display**: `viewBox` is set via string concat (prevents `${W} ${H}` parsing warning). Streaming render + safe keyed data join prevents the `d.text` null error.
 
 ## Run locally
 ```bash

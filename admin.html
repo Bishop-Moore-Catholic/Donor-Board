@@ -53,13 +53,13 @@ The Morales Family"></textarea>
     $('#count').textContent = list.length;
     $('#chips').innerHTML = list
       .sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}))
-      .map(d => `<span class="pill" title="\${new Date(d.addedAt).toLocaleString()}">\${d.name}</span>`).join('');
+      .map(d => `<span class="pill" title="${new Date(d.addedAt).toLocaleString()}">${d.name}</span>`).join('');
   }
 
   function addFromInput() {
     const raw = $('#nameInput').value;
     // Split on newline OR comma OR tab
-    const parts = raw.split(/[\n,\t]/g).map(normalizeName).filter(Boolean);
+    const parts = raw.split(/[\n,\t,]/g).map(normalizeName).filter(Boolean);
     if (!parts.length) return;
 
     const list = load();
