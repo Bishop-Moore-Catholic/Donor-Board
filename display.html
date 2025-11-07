@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Donor Board – Display (debug count)</title>
+<title>Donor Board – Display (adaptive sizing)</title>
 <link rel="icon" href="assets/favicon.svg">
 <script src="https://unpkg.com/d3@7"></script>
 <script src="https://unpkg.com/d3-cloud/build/d3.layout.cloud.js"></script>
@@ -19,59 +19,39 @@
 </head>
 <body>
 <header>Thank you to our generous donors</header>
-<div id="stage">
-  <svg id="cloud" aria-label="Donor word cloud"></svg>
-</div>
+<div id="stage"><svg id="cloud" aria-label="Donor word cloud"></svg></div>
 
 <script>
 (() => {
   const KEY = 'donorList.v1';
-  const EMPH_KEY = 'donorEmphasized.v1'; // persist emphasize set
+  const EMPH_KEY = 'donorEmphasized.v1';
   const CH = new BroadcastChannel('donors');
   const svg = d3.select('#cloud');
   const stage = document.getElementById('stage');
   let W = stage.clientWidth, H = stage.clientHeight;
 
   function setViewBox(){ svg.attr('viewBox', '0 0 ' + W + ' ' + H); }
-  function resize(){ W = stage.clientWidth; H = stage.clientHeight; setViewBox(); redraw(); }
+  function resize(){ W = stage.clientWidth; H = stage.clientHeight; setViewBox(); scheduleRedraw(); }
   window.addEventListener('resize', resize);
 
   function load() { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; } }
   const normalizeName = s => s.normalize('NFKC').replace(/\s+/g,' ').trim();
   const keyName = s => normalizeName(s).toLowerCase();
 
-  function loadEmph() {
-    try { return new Set(JSON.parse(localStorage.getItem(EMPH_KEY) || '[]')); }
-    catch { return new Set(); }
-  }
-  function saveEmph(set) {
-    localStorage.setItem(EMPH_KEY, JSON.stringify(Array.from(set)));
-  }
+  function loadEmph() { try { return new Set(JSON.parse(localStorage.getItem(EMPH_KEY) || '[]')); } catch { return new Set(); } }
+  function saveEmph(set) { localStorage.setItem(EMPH_KEY, JSON.stringify(Array.from(set))); }
 
-  // base font size from CSS, scaled by count
-  function baseFontPx(total) {
-    const cssSize = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--base-size')) || 28;
-    if (total <= 50) return cssSize;
-    const drop = (total - 50) / 200; // 0..1 over next 200 names
-    const scale = Math.max(0.6, 1 - 0.4 * drop);
-    return cssSize * scale;
-  }
-
-  function wordsFromDonors() {
-    const list = load().slice().sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}));
-    // Debug log: how many names in storage
-    console.log('[DonorBoard] total donors:', list.length);
-    const size = baseFontPx(list.length);
-    return list.map(d => ({ text: d.name, key: keyName(d.name), size }));
-  }
+  const cssBase = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--base-size')) || 28;
 
   let prevPos = new Map();
   let emphasized = loadEmph();
+  let inFlight = false;
+  let pending = false;
 
-  function dynamicPadding(d) {
-    const base = Math.max(12, Math.round(d.size * 0.4));
-    const extra = Math.min(30, Math.floor(d.text.length * 0.8));
-    return base + extra;
+  function dynamicPadding(d, padScale=1) {
+    const base = Math.max(10, Math.round(d.size * 0.35));
+    const extra = Math.min(28, Math.floor(d.text.length * 0.7));
+    return Math.round((base + extra) * padScale);
   }
 
   function hiDpiCanvas() {
@@ -84,17 +64,15 @@
     return c;
   }
 
-  // Strong vertical relaxation
-  function relaxPositions(nextPos) {
+  function relaxPositions(nextPos, sizePx) {
     const keys = Array.from(nextPos.keys());
-    const size = baseFontPx(keys.length);
     const nodes = keys.map(k => {
       const p = nextPos.get(k);
       const textLen = Math.max(6, k.length);
       return {
         key:k, x:p.x, y:p.y, rotate:p.rotate||0, size:p.size,
-        w: Math.max(40, textLen * size * 0.62) + 12,
-        h: size * 1.7 + 12
+        w: Math.max(40, textLen * sizePx * 0.62) + 12,
+        h: sizePx * 1.7 + 12
       };
     });
 
@@ -123,7 +101,6 @@
               b.y -= sgn * (minRowGap - dy)/2;
             }
           }
-          // clamp to stage
           a.x = Math.max(a.w/2, Math.min(W - a.w/2, a.x));
           a.y = Math.max(a.h/2, Math.min(H - a.h/2, a.y));
           b.x = Math.max(b.w/2, Math.min(W - b.w/2, b.x));
@@ -136,94 +113,130 @@
     return nextPos;
   }
 
+  function scheduleRedraw(){
+    if (inFlight){ pending = true; return; }
+    redrawAdaptive();
+  }
+
+  function redrawAdaptive(){
+    const donors = load().slice().sort((a,b)=> a.name.localeCompare(b.name, undefined, {sensitivity:'base'}));
+    const total = donors.length;
+    console.log('[DonorBoard] total donors:', total);
+
+    // Start from computed base and try smaller if placement ratio is low
+    let sizePx = (total <= 50) ? cssBase() : cssBase() * Math.max(0.58, 1 - 0.42 * ((total - 50) / 200));
+    const tries = [
+      {scale:1.00, pad:1.00},
+      {scale:0.90, pad:0.95},
+      {scale:0.82, pad:0.9},
+      {scale:0.74, pad:0.85},
+      {scale:0.66, pad:0.8}
+    ];
+
+    let attemptIndex = 0;
+
+    const CENTERX = W/2, CENTERY = H/2;
+
+    function attempt(){
+      if (attemptIndex >= tries.length){ inFlight=false; if (pending){ pending=false; redrawAdaptive(); } return; }
+      inFlight = true;
+      const t = tries[attemptIndex++];
+      const fontPx = sizePx * t.scale;
+      const padScale = t.pad;
+
+      const words = donors.map(d => ({ text: d.name, key: keyName(d.name), size: fontPx }));
+      const cloud = d3.layout.cloud()
+        .canvas(hiDpiCanvas)
+        .size([W, H])
+        .words(words)
+        .padding(d => dynamicPadding(d, padScale))
+        .font('system-ui, sans-serif')
+        .fontSize(d => d.size)
+        .rotate(() => 0)
+        .on('end', placed => {
+          console.log('[DonorBoard] attempt', attemptIndex, 'fontPx', fontPx.toFixed(1), 'padScale', padScale, 'placed', placed.length);
+          const target = Math.min(total, 180); // practical cap for visibility
+          const ratio = placed.length / (total || 1);
+          // If we placed too few, try next (smaller) settings
+          if (placed.length < Math.min(target, total * 0.85) && attemptIndex < tries.length){
+            inFlight = false;
+            attempt();
+            return;
+          }
+
+          let nextPos = new Map();
+          placed.forEach(d => nextPos.set(keyName(d.text), { x: d.x + CENTERX, y: d.y + CENTERY, rotate: d.rotate || 0, size: d.size }));
+          nextPos = relaxPositions(nextPos, fontPx);
+
+          const layer = svg.selectAll('g.words').data([null]).join('g').attr('class','words');
+          const sel = layer.selectAll('text.word').data(placed, d => d.text);
+
+          sel.exit().transition().duration(200).style('opacity', 0).remove();
+
+          const enter = sel.enter().append('text')
+            .attr('class', 'word')
+            .style('font-family', 'system-ui, sans-serif')
+            .text(d => d.text)
+            .attr('text-anchor', 'middle')
+            .attr('dominant-baseline', 'middle')
+            .style('opacity', 0)
+            .attr('font-size', d => d.size)
+            .attr('transform', 'translate(' + CENTERX + ',' + CENTERY + ')');
+
+          enter.merge(sel)
+            .classed('emph', d => emphasized.has(keyName(d.text)))
+            .transition().duration(450)
+            .style('opacity', 1)
+            .attr('font-size', d => d.size)
+            .attr('transform', d => {
+              const p = nextPos.get(keyName(d.text));
+              const scale = emphasized.has(keyName(d.text)) ? 1.35 : 1;
+              return 'translate(' + p.x + ',' + p.y + ') rotate(' + (d.rotate||0) + ') scale(' + scale + ')';
+            });
+
+          prevPos = nextPos;
+          inFlight = false;
+          if (pending){ pending = false; redrawAdaptive(); }
+        });
+
+      cloud.start();
+    }
+
+    attempt();
+  }
+
   function toggleEmphasize(nameKey){
     if (emphasized.has(nameKey)) emphasized.delete(nameKey);
     else emphasized.add(nameKey);
     saveEmph(emphasized);
     const p = prevPos.get(nameKey);
     const node = svg.selectAll('text.word').filter(function(){ return this.textContent && nameKey === keyName(this.textContent); });
-    if (!node.size() || !p) { redraw(); return; }
+    if (!node.size() || !p) { scheduleRedraw(); return; }
     node.classed('emph', emphasized.has(nameKey))
-      .transition().duration(250)
+      .transition().duration(200)
       .attr('transform', 'translate(' + p.x + ',' + p.y + ') rotate(' + p.rotate + ') scale(' + (emphasized.has(nameKey)?1.35:1) + ')');
   }
 
-  function redraw() {
-    const CENTERX = W/2, CENTERY = H/2;
-    const words = wordsFromDonors();
-
-    const cloud = d3.layout.cloud()
-      .canvas(hiDpiCanvas)
-      .size([W, H])
-      .words(words)
-      .padding(dynamicPadding)
-      .font('system-ui, sans-serif')
-      .fontSize(d => d.size)
-      .rotate(() => 0)
-      .on('end', draw);
-
-    cloud.start();
-
-    function draw(placed) {
-      // Debug log: how many words were successfully placed
-      console.log('[DonorBoard] placed words:', placed.length);
-
-      let nextPos = new Map();
-      placed.forEach(d => nextPos.set(keyName(d.text), { x: d.x + CENTERX, y: d.y + CENTERY, rotate: d.rotate || 0, size: d.size }));
-
-      nextPos = relaxPositions(nextPos);
-
-      const layer = svg.selectAll('g.words').data([null]).join('g').attr('class','words');
-      const sel = layer.selectAll('text.word').data(placed, d => d.text);
-
-      sel.exit().transition().duration(300).style('opacity', 0).remove();
-
-      const enter = sel.enter().append('text')
-        .attr('class', 'word')
-        .style('font-family', 'system-ui, sans-serif')
-        .text(d => d.text)
-        .attr('text-anchor', 'middle')
-        .attr('dominant-baseline', 'middle')
-        .style('opacity', 0)
-        .attr('font-size', d => d.size)
-        .attr('transform', 'translate(' + CENTERX + ',' + CENTERY + ')');
-
-      enter.merge(sel)
-        .classed('emph', d => emphasized.has(keyName(d.text)))
-        .transition().duration(600)
-        .style('opacity', 1)
-        .attr('font-size', d => d.size)
-        .attr('transform', d => {
-          const p = nextPos.get(keyName(d.text));
-          const scale = emphasized.has(keyName(d.text)) ? 1.35 : 1;
-          return 'translate(' + p.x + ',' + p.y + ') rotate(' + (d.rotate||0) + ') scale(' + scale + ')';
-        });
-
-      prevPos = nextPos;
-    }
-  }
-
-  function fullRender() { prevPos.clear(); redraw(); }
-
   CH.onmessage = (ev) => {
     const msg = ev.data || {};
-    if (msg.type === 'added' && Array.isArray(msg.donors)) redraw();
+    if (msg.type === 'added' && Array.isArray(msg.donors)) scheduleRedraw();
     else if (msg.type === 'reset') {
       svg.selectAll('*').remove();
-      fullRender();
+      prevPos.clear();
+      scheduleRedraw();
     }
     else if (msg.type === 'emphasize' && msg.name) {
       toggleEmphasize(keyName(msg.name));
     }
     else if (msg.type === 'remove' && msg.key) {
-      redraw();
+      scheduleRedraw();
     }
   };
 
-  window.addEventListener('storage', (e) => { if (e.key === KEY) redraw(); });
+  window.addEventListener('storage', (e) => { if (e.key === KEY) scheduleRedraw(); });
 
   setViewBox();
-  fullRender();
+  scheduleRedraw();
 })();
 </script>
 </body>
