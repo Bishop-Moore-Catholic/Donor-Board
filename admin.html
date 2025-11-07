@@ -23,13 +23,12 @@
   <div class="row">
     <button id="openDisplay">Open Display Page</button>
     <button id="clearAll" title="Remove all donors (affects display)">Clear All</button>
-    <span class="muted">Paste names (one per line) or comma-separate; duplicates are ignored (case-insensitive, trimmed).</span>
+    <span class="muted">Paste names (newline, comma, or tab-separated). Duplicates are ignored (case-insensitive, trimmed).</span>
   </div>
 
   <p></p>
   <textarea id="nameInput" placeholder="e.g.
-Jane Smith
-John D. Brown, Alicia Cruz
+Jane Smith	John D. Brown, Alicia Cruz
 The Morales Family"></textarea>
   <p class="row">
     <button class="primary" id="addNames">Add Names</button>
@@ -53,13 +52,14 @@ The Morales Family"></textarea>
     const list = load();
     $('#count').textContent = list.length;
     $('#chips').innerHTML = list
-      .sort((a,b) => a.addedAt - b.addedAt || a.name.localeCompare(b.name, undefined, {sensitivity:'base'}))
+      .sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}))
       .map(d => `<span class="pill" title="${new Date(d.addedAt).toLocaleString()}">${d.name}</span>`).join('');
   }
 
   function addFromInput() {
     const raw = $('#nameInput').value;
-    const parts = raw.split(/\n|,/g).map(normalizeName).filter(Boolean);
+    // Split on newline OR comma OR tab
+    const parts = raw.split(/[\n,\t]/g).map(normalizeName).filter(Boolean);
     if (!parts.length) return;
 
     const list = load();
