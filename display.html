@@ -5,221 +5,264 @@
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Donor Board – Display</title>
 <link rel="icon" href="assets/favicon.svg">
-<style>
-  :root {
-    --base-size: clamp(18px, 2.2vw, 36px); /* final equal size for names */
-    --gap: 18px;
-    --in-duration: 3800ms; /* pop-in time */
-  }
-
-  html, body {
-    height:100%;
-    margin:0;
-    background:#fafafa;
-    color:#111;
-    font-family: system-ui, sans-serif;
-    overflow:hidden; /* keeps the composition tidy */
-  }
-
-  .wrap {
-    height:100%;
-    display:flex;
-    flex-direction:column;
-  }
-
-  header {
-    padding:18px 20px 8px;
-    font-weight:600;
-    letter-spacing:.5px;
-  }
-
-  /* FLEX cloud, centered BOTH axes, wraps around a fixed 300x300 flex item */
-  #cloud {
-    position:relative;
-    height:100%;
-    display:flex;
-    flex-wrap:wrap;
-    gap: var(--gap);
-    padding: 14px 20px 32px;
-    justify-content: center;   /* horizontal centering of each row */
-    align-content: center;     /* vertical centering of the whole wrapped block */
-  }
-
-  /* The central 300x300 placeholder (flex item) that the names wrap around */
-  .centerpiece {
-    flex: 0 0 300px;
-    height: 300px;
-    display:grid;
-    place-items:center;
-    border: 2px dashed #ddd;   /* visible placeholder frame */
-    border-radius: 12px;
-    background: #fff;
-    box-shadow: 0 2px 10px rgba(0,0,0,.04) inset;
-    order: 0;                  /* ensure it sits before the names in flow */
-  }
-  .centerpiece img {
-    width: 300px;
-    height: 300px;
-    object-fit: contain;
-    border-radius: 8px;
-    display:block;
-  }
-
-  /* Names */
-  .name {
-    font-size: var(--base-size);
-    line-height: 1;
-    white-space: nowrap;
-    will-change: transform, opacity;
-    transform-origin: center center;
-    user-select:none;
-    order: 1; /* appear around/after the centerpiece in flow */
-  }
-
-  /* pop in larger then settle to equal size */
-  .pop {
-    animation: popin var(--in-duration) ease-out both; /* both = apply styles before & after */
-  }
-  @keyframes popin {
-    0%   { transform: scale(2) rotate(var(--rot, 0deg)); opacity: 0; }
-    8%   { opacity: 1; }
-    100% { transform: scale(1) rotate(var(--rot, 0deg)); opacity: 1; }
-  }
-
-  /* optional gentle drift after pop finishes */
-  .floaty {
-    animation: floaty 16s ease-in-out infinite alternate;
-  }
-  @keyframes floaty {
-    from { transform: translateY(-2px) rotate(var(--rot, 0deg)); }
-    to   { transform: translateY(2px)  rotate(var(--rot, 0deg)); }
-  }
-</style>
+<link rel="stylesheet" href="styles.css">
+<script src="https://unpkg.com/d3@7"></script>
+<script src="https://unpkg.com/d3-cloud/build/d3.layout.cloud.js"></script>
 </head>
 <body>
-<div class="wrap">
-  <header>Thank you to our generous donors</header>
-
-  <div id="cloud" aria-live="polite">
-    <!-- Centerpiece sits in the middle; replace src with your 300x300 image when ready -->
-    <div class="centerpiece" id="centerpiece">
-      <img
-        id="centerImage"
-        alt="Centerpiece 300×300"
-        src="data:image/svg+xml;utf8,<?xml version='1.0' encoding='UTF-8'?><svg xmlns='http://www.w3.org/2000/svg' width='300' height='300' viewBox='0 0 300 300'><rect width='300' height='300' fill='%23f5f5f5'/><rect x='1.5' y='1.5' width='297' height='297' fill='none' stroke='%23cccccc' stroke-width='3' stroke-dasharray='10 8'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-family='system-ui, sans-serif' font-size='18' fill='%23999'>300×300 Placeholder</text></svg>"
-      />
-    </div>
-  </div>
-</div>
+  <h1 class="db-title">Thank You To Our Generous Donors!</h1>
+  <div id="stage"><svg id="cloud" aria-label="Donor word cloud"></svg></div>
 
 <script>
 (() => {
   const KEY = 'donorList.v1';
+  const EMPH_KEY = 'donorEmphasized.v1';
+  const THEME_KEY = 'donorTheme.v1';
   const CH = new BroadcastChannel('donors');
-  const cloud = document.getElementById('cloud');
-  const centerpiece = document.getElementById('centerpiece');
-  const present = new Map();
+  const svg = d3.select('#cloud');
+  const stage = document.getElementById('stage');
+  let W = stage.clientWidth, H = stage.clientHeight;
 
-  function load() {
-    try { return JSON.parse(localStorage.getItem(KEY)) || []; }
-    catch { return []; }
+  const rootStyle = document.documentElement.style;
+  function applyTheme(theme){
+    if (!theme) return;
+    rootStyle.setProperty('--bg', theme.bg);
+    rootStyle.setProperty('--title-color', theme.titleColor);
+    rootStyle.setProperty('--name-color', theme.nameColor);
+    rootStyle.setProperty('--name-weight', String(theme.nameWeight));
+    rootStyle.setProperty('--emph-color', theme.emphColor);
+    rootStyle.setProperty('--emph-weight', String(theme.emphWeight));
+    rootStyle.setProperty('--emph-scale', String(theme.emphScale));
+    if (theme.bgImageData) {
+      document.body.style.backgroundImage = `url(${theme.bgImageData})`;
+      document.body.style.backgroundSize = 'cover';
+      document.body.style.backgroundPosition = 'center';
+    } else {
+      document.body.style.backgroundImage = 'none';
+    }
+    scheduleRedraw();
   }
+  function loadTheme(){ try { return JSON.parse(localStorage.getItem(THEME_KEY) || 'null'); } catch { return null; } }
+  function saveTheme(theme){ localStorage.setItem(THEME_KEY, JSON.stringify(theme)); }
 
+  function setViewBox(){ svg.attr('viewBox', '0 0 ' + W + ' ' + H); }
+  function resize(){ W = stage.clientWidth; H = stage.clientHeight; setViewBox(); scheduleRedraw(); }
+  window.addEventListener('resize', resize);
+
+  const url = new URL(location.href);
+  const bias = url.searchParams.get('bias') || 'balanced';
+  const MAX_CAP = Math.min(+(url.searchParams.get('max') || 350), 10000);
+
+  function load() { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; } }
   const normalizeName = s => s.normalize('NFKC').replace(/\s+/g,' ').trim();
   const keyName = s => normalizeName(s).toLowerCase();
 
-  function randomSmallRotation() {
-    const degrees = (Math.random() * 6 - 3).toFixed(2); // -3..+3
-    return degrees + 'deg';
+  function loadEmph() { try { return new Set(JSON.parse(localStorage.getItem(EMPH_KEY) || '[]')); } catch { return new Set(); } }
+  function saveEmph(set) { localStorage.setItem(EMPH_KEY, JSON.stringify(Array.from(set))); }
+
+  const cssBase = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--base-size')) || 28;
+  const emphScale = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--emph-scale')) || 1.35;
+
+  let prevPos = new Map();
+  let emphasized = loadEmph();
+  let inFlight = false;
+  let pending = false;
+
+  function measureFactory() {
+    const ratio = window.devicePixelRatio || 1;
+    const c = document.createElement('canvas'); c.width = 512*ratio; c.height = 160*ratio;
+    const ctx = c.getContext('2d'); ctx.setTransform(ratio,0,0,ratio,0,0);
+    return (text, px) => { ctx.font = px + 'px \"futura-pt\", system-ui, sans-serif'; return ctx.measureText(text).width; };
+  }
+  const measureText = measureFactory();
+
+  function hiDpiCanvas() {
+    const ratio = (window.devicePixelRatio || 1);
+    const c = document.createElement('canvas');
+    c.width = Math.round(256 * ratio);
+    c.height = Math.round(256 * ratio);
+    const ctx = c.getContext('2d');
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    return c;
   }
 
-  function makeNode(name, shouldPop=true) {
-    const span = document.createElement('span');
-    span.className = 'name';
-    span.textContent = name;
-    span.style.setProperty('--rot', randomSmallRotation());
+  function seededRandom(seed) {
+    let s = seed >>> 0;
+    return function() { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; return ((s>>>0)/4294967296); };
+  }
 
-    // Force-start the pop animation reliably in all browsers
-    if (shouldPop) {
-      // ensure initial styles are applied, then add the class on the next frame
-      requestAnimationFrame(() => {
-        // tick to guarantee reflow before adding class (fixes “not animating in”)
-        void span.offsetWidth; 
-        span.classList.add('pop');
-        // after animation ends, add floaty drift
-        setTimeout(() => span.classList.add('floaty'), 4200);
+  function relaxWithQuadtree(nextPos, sizePx){
+    const nodes = Array.from(nextPos.entries()).map(([k,p]) => {
+      const w = Math.max(40, measureText(k, sizePx) + 12);
+      const h = sizePx * 1.5 + 8;
+      return {key:k, x:p.x, y:p.y, w, h, rotate:p.rotate||0, size:p.size};
+    });
+
+    const passes = 8;
+    for (let pass=0; pass<passes; pass++){
+      const qt = d3.quadtree().x(d=>d.x).y(d=>d.y).addAll(nodes);
+      nodes.forEach(n => {
+        const r = Math.max(n.w, n.h);
+        qt.visit((node, x0, y0, x1, y1) => {
+          if (!node.data) return (x0 > n.x + r || x1 < n.x - r || y0 > n.y + r || y1 < n.y - r);
+          const m = node.data; if (m === n) return false;
+          const overlapX = Math.abs(n.x - m.x) < (n.w + m.w)/2;
+          const overlapY = Math.abs(n.y - m.y) < (n.h + m.h)/2;
+          if (overlapX && overlapY){
+            const dx = (n.x - m.x) || (Math.random()-0.5);
+            const dy = (n.y - m.y) || (Math.random()-0.5);
+            const push = 4;
+            n.x += (dx / (Math.abs(dx)+Math.abs(dy))) * push;
+            n.y += (dy / (Math.abs(dx)+Math.abs(dy))) * push;
+            m.x -= (dx / (Math.abs(dx)+Math.abs(dy))) * push;
+            m.y -= (dy / (Math.abs(dx)+Math.abs(dy))) * push;
+          }
+          return false;
+        });
+        n.x = Math.max(n.w/2, Math.min(W - n.w/2, n.x));
+        n.y = Math.max(n.h/2, Math.min(H - n.h/2, n.y));
       });
-    } else {
-      // initial (non-pop) nodes can still drift
-      setTimeout(() => span.classList.add('floaty'), 1200);
     }
-    return span;
+    nodes.forEach(n => nextPos.set(n.key, {x:n.x, y:n.y, rotate:n.rotate, size:n.size}));
+    return nextPos;
   }
 
-  function fullRender() {
-    // Clear everything except the centerpiece
-    [...cloud.children].forEach(node => { if (node !== centerpiece) node.remove();});
-    present.clear();
+  function setViewBox(){ svg.attr('viewBox', '0 0 ' + W + ' ' + H); }
+  function scheduleRedraw(){ if (inFlight){ pending = true; return; } redrawAdaptive(); }
 
-    const list = load();
-    // Keep it tidy: alpha sort then lightly shuffle for variety
-    list.sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}));
-    const shuffled = shuffle(list);
-    for (const d of shuffled) {
-      const node = makeNode(d.name, /*pop*/ false);
-      cloud.appendChild(node);
-      present.set(keyName(d.name), true);
-    }
+  function redrawAdaptive(){
+    const donors0 = load().slice().sort((a,b)=> a.name.localeCompare(b.name, undefined, {sensitivity:'base'}));
+    const donors = donors0.slice(0, MAX_CAP);
+    const total = donors.length;
+    console.log('[DonorBoard] total donors (capped):', total);
+
+    let changed = false;
+    emphasized.forEach(k => { if (!donors.find(d => keyName(d.name) === k)) { emphasized.delete(k); changed = true; } });
+    if (changed) saveEmph(emphasized);
+
+    const base = (total <= 50) ? cssBase() : cssBase() * Math.max(0.6, 1 - 0.4 * ((total - 50) / 200));
+    const tries = [
+      {scale:1.00, pad:1.00},
+      {scale:0.94, pad:0.95},
+      {scale:0.88, pad:0.90},
+      {scale:0.82, pad:0.86},
+      {scale:0.76, pad:0.82},
+      {scale:0.70, pad:0.78},
+    ];
+    const accept = (bias==='larger') ? 0.80 : (bias==='denser' ? 0.97 : 0.95);
+
+    const CENTERX = W/2, CENTERY = H/2;
+    let attemptIndex = 0;
+    inFlight = true;
+
+    const seed = 123456 ^ total ^ Math.floor(W) ^ Math.floor(H);
+    const rng = seededRandom(seed);
+
+    (function attempt(){
+      if (attemptIndex >= tries.length){ inFlight=false; if (pending){ pending=false; redrawAdaptive(); } return; }
+      const t = tries[attemptIndex++];
+      const fontPx = base * t.scale;
+      const padScale = t.pad;
+
+      const words = donors.map(d => ({ text: d.name, key: keyName(d.name), size: fontPx }));
+      const cloud = d3.layout.cloud()
+        .canvas(hiDpiCanvas)
+        .size([W, H])
+        .words(words)
+        .padding(d => Math.round((Math.max(8, fontPx*0.3) + Math.min(24, d.text.length*0.5)) * padScale))
+        .font('futura-pt, system-ui, sans-serif')
+        .fontSize(d => d.size)
+        .spiral('rectangular')
+        .random(rng)
+        .rotate(() => 0)
+        .on('end', placed => {
+          console.log('[DonorBoard] attempt', attemptIndex, 'fontPx', fontPx.toFixed(1), 'padScale', padScale, 'placed', placed.length);
+          const ratio = placed.length / (total || 1);
+          if (ratio < accept && attemptIndex < tries.length) { attempt(); return; }
+
+          let nextPos = new Map();
+          placed.forEach(d => nextPos.set(d.key, { x: d.x + CENTERX, y: d.y + CENTERY, rotate: d.rotate || 0, size: d.size }));
+
+          nextPos = relaxWithQuadtree(nextPos, fontPx);
+
+          const layer = svg.selectAll('g.words').data([null]).join('g').attr('class','words');
+          const sel = layer.selectAll('text.word').data(placed, d => d.key);
+
+          sel.exit().transition().duration(150).style('opacity', 0).remove();
+
+          const enter = sel.enter().append('text')
+            .attr('class', 'word')
+            .style('font-family', 'futura-pt, system-ui, sans-serif')
+            .text(d => d.text)
+            .attr('text-anchor', 'middle')
+            .attr('dominant-baseline', 'middle')
+            .style('opacity', 0)
+            .attr('font-size', d => d.size)
+            .attr('transform', 'translate(' + CENTERX + ',' + CENTERY + ')');
+
+          enter.merge(sel)
+            .classed('emph', d => emphasized.has(d.key))
+            .transition().duration(360)
+            .style('opacity', 1)
+            .attr('font-size', d => d.size)
+            .attr('transform', d => {
+              const p = nextPos.get(d.key);
+              const scale = emphasized.has(d.key) ? (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--emph-scale')) || 1.35) : 1;
+              return 'translate(' + p.x + ',' + p.y + ') rotate(' + (d.rotate||0) + ') scale(' + scale + ')';
+            });
+
+          prevPos = nextPos;
+          inFlight = false;
+          if (pending){ pending = false; redrawAdaptive(); }
+        });
+
+      cloud.start();
+    })();
   }
 
-  function shuffle(arr) {
-    const a = arr.slice();
-    for (let i=a.length-1; i>0; i--) {
-      const j = Math.floor(Math.random()*(i+1));
-      [a[i], a[j]] = [a[j], a[i]];
-    }
-    return a;
-  }
-
-  function addNew(donors) {
-    // Insert new names near the center for a “populate around the middle” effect.
-    // We'll insert just AFTER the centerpiece so they appear close to the center area.
-    const insertIndex = Array.prototype.indexOf.call(cloud.children, centerpiece) + 1;
-
-    for (const d of donors) {
-      const k = keyName(d.name);
-      if (!present.has(k)) {
-        const node = makeNode(d.name, /*shouldPop*/ true);
-        const refChild = cloud.children[insertIndex] || null;
-        cloud.insertBefore(node, refChild);
-        present.set(k, true);
-      }
-    }
+  function toggleEmphasize(nameKey){
+    const scaleVal = (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--emph-scale')) || 1.35);
+    if (emphasized.has(nameKey)) emphasized.delete(nameKey);
+    else emphasized.add(nameKey);
+    saveEmph(emphasized);
+    const p = prevPos.get(nameKey);
+    const node = svg.selectAll('text.word').filter(function(){ return this.textContent && nameKey === (this.textContent.normalize('NFKC').replace(/\s+/g,' ').trim()).toLowerCase(); });
+    if (!node.size() || !p) { scheduleRedraw(); return; }
+    node.classed('emph', emphasized.has(nameKey))
+      .transition().duration(200)
+      .attr('transform', 'translate(' + p.x + ',' + p.y + ') rotate(' + p.rotate + ') scale(' + (emphasized.has(nameKey)?scaleVal:1) + ')');
   }
 
   CH.onmessage = (ev) => {
     const msg = ev.data || {};
-    if (msg.type === 'added' && Array.isArray(msg.donors)) {
-      addNew(msg.donors);
-    } else if (msg.type === 'reset') {
-      fullRender();
+    if (msg.type === 'themeUpdate' && msg.theme) {
+      saveTheme(msg.theme);
+      applyTheme(msg.theme);
+    }
+    else if (msg.type === 'added' && Array.isArray(msg.donors)) scheduleRedraw();
+    else if (msg.type === 'reset') {
+      svg.selectAll('*').remove();
+      prevPos.clear();
+      emphasized.clear(); saveEmph(emphasized);
+      scheduleRedraw();
+    }
+    else if (msg.type === 'clearEmph') { emphasized.clear(); saveEmph(emphasized); scheduleRedraw(); }
+    else if (msg.type === 'emphasize' && msg.name) {
+      const k = (msg.name.normalize('NFKC').replace(/\s+/g,' ').trim()).toLowerCase();
+      toggleEmphasize(k);
+    }
+    else if (msg.type === 'remove' && msg.key) {
+      emphasized.delete(msg.key); saveEmph(emphasized);
+      scheduleRedraw();
     }
   };
 
-  window.addEventListener('storage', (e) => {
-    if (e.key === KEY) fullRender();
-  });
+  const savedTheme = loadTheme(); if (savedTheme) applyTheme(savedTheme);
+  window.addEventListener('storage', (e) => { if (e.key === KEY || e.key === EMPH_KEY || e.key === THEME_KEY) scheduleRedraw(); });
 
-  // Initial load
-  fullRender();
-
-  // Optional: replace the center image by adding ?img=URL to the page URL
-  const params = new URLSearchParams(location.search);
-  const img = params.get('img');
-  if (img) {
-    const imgEl = document.getElementById('centerImage');
-    imgEl.src = img;
-  }
+  function setViewBox(){ svg.attr('viewBox', '0 0 ' + W + ' ' + H); }
+  setViewBox();
+  scheduleRedraw();
 })();
 </script>
 </body>
