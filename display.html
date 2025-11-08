@@ -124,6 +124,11 @@
   let emphasized = loadEmph();
   let inFlight = false;
   let pending = false;
+  let activeCloud = null;
+  let layoutWatchdog = null;
+  let layoutEpoch = 0;
+  const WATCHDOG_MIN = 3500;
+  const WATCHDOG_MAX = 12000;
 
   function measureFactory() {
     const ratio = window.devicePixelRatio || 1;
@@ -184,6 +189,34 @@
     return nextPos;
   }
 
+  function clearLayoutWatchdog(){
+    if (layoutWatchdog) {
+      clearTimeout(layoutWatchdog);
+      layoutWatchdog = null;
+    }
+  }
+  function startLayoutWatchdog(wordCount, epoch){
+    clearLayoutWatchdog();
+    const timeout = Math.min(WATCHDOG_MAX, Math.max(WATCHDOG_MIN, (wordCount || 1) * 15));
+    const watchEpoch = typeof epoch === 'number' ? epoch : layoutEpoch;
+    layoutWatchdog = setTimeout(() => {
+      if (watchEpoch !== layoutEpoch) return;
+      console.warn('[DonorDisplay] Layout watchdog fired after', timeout, 'ms — retrying layout.');
+      abortActiveLayout();
+    }, timeout);
+  }
+  function abortActiveLayout(){
+    if (!inFlight) return;
+    if (activeCloud && typeof activeCloud.stop === 'function') {
+      try { activeCloud.stop(); } catch {}
+    }
+    activeCloud = null;
+    clearLayoutWatchdog();
+    inFlight = false;
+    pending = false;
+    requestAnimationFrame(() => redrawAdaptive());
+  }
+
   function setViewBox(){ svg.attr('viewBox', '0 0 ' + W + ' ' + H); }
   function scheduleRedraw(){ if (inFlight){ pending = true; return; } redrawAdaptive(); }
 
@@ -192,6 +225,8 @@
     const donors = donors0.slice(0, MAX_CAP);
     const total = donors.length;
     console.log('[DonorBoard] total donors (capped):', total);
+    const layoutRunEpoch = ++layoutEpoch;
+    clearLayoutWatchdog();
 
     let changed = false;
     emphasized.forEach(k => { if (!donors.find(d => keyName(d.name) === k)) { emphasized.delete(k); changed = true; } });
@@ -214,12 +249,20 @@
     const CENTERX = W/2, CENTERY = H/2;
     let attemptIndex = 0;
     inFlight = true;
+    layoutEpoch++;
+    clearLayoutWatchdog();
 
     const seed = 123456 ^ total ^ Math.floor(W) ^ Math.floor(H);
     const rng = seededRandom(seed);
 
     (function attempt(){
-      if (attemptIndex >= tries.length){ inFlight=false; if (pending){ pending=false; redrawAdaptive(); } return; }
+      if (attemptIndex >= tries.length){
+        clearLayoutWatchdog();
+        activeCloud = null;
+        inFlight=false;
+        if (pending){ pending=false; redrawAdaptive(); }
+        return;
+      }
       const t = tries[attemptIndex++];
       const fontPx = base * t.scale;
       const padScale = t.pad;
@@ -238,6 +281,8 @@
         .on('end', placed => {
           console.log('[DonorBoard] attempt', attemptIndex, 'fontPx', fontPx.toFixed(1), 'padScale', padScale, 'placed', placed.length);
           const ratio = placed.length / (total || 1);
+          activeCloud = null;
+          clearLayoutWatchdog();
           if (ratio < accept && attemptIndex < tries.length) { attempt(); return; }
 
           let nextPos = new Map();
@@ -260,7 +305,8 @@
             .attr('font-size', d => d.size)
             .attr('transform', 'translate(' + CENTERX + ',' + CENTERY + ')');
 
-          enter.merge(sel)
+          const merged = enter.merge(sel).interrupt();
+          merged
             .classed('emph', d => emphasized.has(d.key))
             .transition().duration(360)
             .style('opacity', 1)
@@ -270,12 +316,17 @@
               const scale = emphasized.has(d.key) ? (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--emph-scale')) || 1.35) : 1;
               return 'translate(' + p.x + ',' + p.y + ') rotate(' + (d.rotate||0) + ') scale(' + scale + ')';
             });
+          setTimeout(() => {
+            merged.style('opacity', 1);
+          }, 720);
 
           prevPos = nextPos;
           inFlight = false;
           if (pending){ pending = false; redrawAdaptive(); }
         });
 
+      activeCloud = cloud;
+      startLayoutWatchdog(donors.length, layoutRunEpoch);
       cloud.start();
     })();
   }
