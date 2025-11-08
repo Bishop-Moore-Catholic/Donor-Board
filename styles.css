@@ -4,8 +4,8 @@
 :root {
   --bg: #f7f7f7;
   --title-color: #0f0f0f;
-  --title-size: clamp(28px, 4.2vw, 64px);
-  --title-weight: 700;
+  --title-size: clamp(24px, 4.2vw, 64px);
+  --title-weight: 600;
   --title-tracking: 0.02em;
 
   --name-color: #0f0f0f;
