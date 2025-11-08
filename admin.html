@@ -30,16 +30,22 @@ The +Morales Family"></textarea>
       <!-- CSV IMPORT -->
       <div class="import-wrap">
         <label class="dropzone" id="dropzone">
-          <input type="file" id="csvInput" accept=".csv,text/csv" />
+          <input type="file" id="csvInput" accept=".csv,text/csv" multiple />
           <div>
-            <strong>Drop a OneCause CSV here</strong><br/>
-            <span class="hint">We’ll import <code>Column M</code> (names) and auto‑emphasize anyone with <code>Column B ≥ threshold</code>.</span><br/>
+            <strong>Drop CSVs here</strong><br/>
+            <span class="hint">Required: <em>OneCause&nbsp;‑&nbsp;Donations</em>. Optional: <em>paid‑donations</em> (filters anonymous donors).</span><br/>
             <button type="button" id="browseBtn" style="margin-top:8px;">Browse…</button>
           </div>
         </label>
         <div class="controls">
           <div class="field"><label for="threshold"><strong>Emphasize threshold ($)</strong></label> <input type="number" id="threshold" min="0" step="50" value="1000"></div>
           <div class="field"><span>Columns used:</span> <code>B (amount)</code> & <code>M (name)</code></div>
+          <div class="field"><label for="filterSource"><strong>paid-donations source</strong></label>
+            <input type="text" id="filterSource" placeholder="e.g. Gala 2025"></div>
+        </div>
+        <div class="csv-status">
+          <div>Primary (<em>OneCause - Donations</em>): <span id="primaryStatus" class="csv-pill">Not loaded</span></div>
+          <div>Filter (<em>paid-donations</em>): <span id="filterStatus" class="csv-pill">Not loaded</span></div>
         </div>
       </div>
 
@@ -95,6 +101,7 @@ The +Morales Family"></textarea>
   const EMPH_KEY = 'donorEmphasized.v1';
   const THEME_KEY = 'donorTheme.v1';
   const MSG_KEY = 'donorBroadcast.v1';
+  const FILTER_SOURCE_KEY = 'donorPaidSource.v1';
   const channel = (() => {
     try { return new BroadcastChannel('donors'); }
     catch (err) {
@@ -378,42 +385,148 @@ The +Morales Family"></textarea>
   const fileInput = document.getElementById('csvInput');
   const browseBtn = document.getElementById('browseBtn');
   const thresholdEl = document.getElementById('threshold');
-  let parsedRows = null;
+  const filterSourceInput = document.getElementById('filterSource');
+  const primaryStatusEl = document.getElementById('primaryStatus');
+  const filterStatusEl = document.getElementById('filterStatus');
+  let primaryRows = null;
+  let filterRows = null;
+  let primaryFileName = '';
+  let filterFileName = '';
+  const loadFilterSource = () => localStorage.getItem(FILTER_SOURCE_KEY) || '';
+  let filterSource = loadFilterSource();
+  const persistFilterSource = (val) => {
+    filterSource = String(val || '').trim();
+    localStorage.setItem(FILTER_SOURCE_KEY, filterSource);
+  };
+  if (filterSourceInput) {
+    filterSourceInput.value = filterSource;
+    filterSourceInput.addEventListener('change', (e) => {
+      persistFilterSource(e.target.value.trim());
+      updateCsvStatus();
+    });
+  }
 
-  function handleFiles(files){
-    const file = files && files[0];
-    if (!file) return;
+  function detectCsvKind(fileName = '', rows){
+    const name = String(fileName || '').toLowerCase();
+    if (name.includes('paid')) return 'filter';
+    if (name.includes('onecause') && name.includes('donation')) return 'primary';
+    const header = Array.isArray(rows?.[0]) ? rows[0] : null;
+    if (header && header.some && header.some(col => /anonymous/i.test(String(col || '')))) return 'filter';
+    if (header && header.some && header.some(col => /recognition/i.test(String(col || '')))) return 'primary';
+    return 'primary';
+  }
+
+  function updateCsvStatus(){
+    if (primaryStatusEl) {
+      primaryStatusEl.textContent = primaryRows ? (primaryFileName || 'Loaded') : 'Not loaded';
+      primaryStatusEl.classList.toggle('loaded', Boolean(primaryRows));
+    }
+    if (filterStatusEl) {
+      const label = filterRows ? (filterFileName || 'Loaded') : 'Not loaded';
+      const srcNote = filterSource ? ` (source: ${filterSource})` : '';
+      filterStatusEl.textContent = label + srcNote;
+      filterStatusEl.classList.toggle('loaded', Boolean(filterRows));
+    }
+  }
+
+  const stripHeader = (rows) => {
+    if (!Array.isArray(rows) || !rows.length) return [];
+    return rows.filter((row, idx) => idx > 0 && Array.isArray(row) && row.some(cell => String(cell ?? '').trim() !== ''));
+  };
+
+  function parseCsvFile(file){
     Papa.parse(file, {
       complete: (res) => {
-        parsedRows = Array.isArray(res.data) ? res.data : [];
-        console.log('[CSV] parsed rows:', parsedRows.length);
+        const rawRows = Array.isArray(res.data) ? res.data : [];
+        const rows = stripHeader(rawRows);
+        const kind = detectCsvKind(file.name, rawRows);
+        if (kind === 'filter') {
+          filterRows = rows;
+          filterFileName = file.name;
+          console.log('[CSV] filter rows parsed:', rows.length);
+        } else {
+          primaryRows = rows;
+          primaryFileName = file.name;
+          console.log('[CSV] primary rows parsed:', rows.length);
+        }
         fileInput.value = '';
-        showCsvPreviewModal();
+        updateCsvStatus();
+        if (primaryRows && kind === 'primary') {
+          showCsvPreviewModal();
+        } else if (primaryRows && kind === 'filter') {
+          showCsvPreviewModal();
+        } else if (!primaryRows && kind === 'filter') {
+          modal.alert('Filter CSV loaded. Please load the OneCause - Donations CSV to preview.');
+        }
       },
       skipEmptyLines: 'greedy'
     });
   }
+
+  function handleFiles(files){
+    const list = Array.from(files || []).filter(Boolean);
+    if (!list.length) return;
+    list.forEach(parseCsvFile);
+  }
   browseBtn.addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+  fileInput.addEventListener('change', (e) => { handleFiles(e.target.files); });
   ;['dragenter','dragover'].forEach(ev => dropzone.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); dropzone.classList.add('dragover'); }));
   ;['dragleave','drop'].forEach(ev => dropzone.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); dropzone.classList.remove('dragover'); }));
   dropzone.addEventListener('drop', (e) => { handleFiles(e.dataTransfer.files); });
 
-  function extractNameAmount(row){
-    const amountRaw = row[1];
-    const nameRaw = row[12];
-    const name = normalizeName(String(nameRaw || ''));
-    const amt = typeof amountRaw === 'number' ? amountRaw : parseFloat(String(amountRaw || '').replace(/[^0-9.-]/g,''));
+  const normalizeSource = (value) => String(value || '').trim().toLowerCase();
+  const isYes = (value) => /^(yes|y|true|1)$/i.test(String(value || '').trim());
+
+  function makeDonationKey(_time, first, last){
+    const fn = keyName(first || '');
+    const ln = keyName(last || '');
+    if (!fn && !ln) return null;
+    return `${ln || '_'}::${fn || '_'}`;
+  }
+
+  function extractPrimaryRecord(row){
+    const recognitionRaw = row[12];
+    const name = normalizeName(String(recognitionRaw || ''));
     if (!name) return null;
-    if (!isFinite(amt) && /name|donor/i.test(String(nameRaw))) return null;
-    return { name, amount: isFinite(amt) ? amt : 0 };
+    if (/recognition/i.test(String(recognitionRaw || '')) && !row[4]) return null;
+    const amountRaw = row[1];
+    const amount = typeof amountRaw === 'number' ? amountRaw : parseFloat(String(amountRaw || '').replace(/[^0-9.-]/g,''));
+    const donationTime = String(row[4] || '').trim();
+    const lastName = String(row[9] || '');
+    const firstName = String(row[10] || '');
+    const donationSource = String(row[1] || '');
+    const key = makeDonationKey(donationTime, firstName, lastName);
+    return {
+      name,
+      amount: isFinite(amount) ? amount : 0,
+      donationTime,
+      donationSource,
+      firstName,
+      lastName,
+      donationKey: key,
+    };
+  }
+
+  function buildAnonKeySet(primaryRowsRef, filterRowsRef){
+    if (!filterRowsRef || !filterRowsRef.length) return new Set();
+    const normalizedSource = normalizeSource(filterSource);
+    const blocked = new Set();
+    (filterRowsRef || []).forEach(row => {
+      const anonValue = row[17];
+      if (!isYes(anonValue)) return;
+      const src = normalizeSource(row[6]);
+      if (normalizedSource && src !== normalizedSource) return;
+      const key = makeDonationKey(row[1], row[8], row[9]);
+      if (key) blocked.add(key);
+    });
+    return blocked;
   }
 
   const escapeHtml = (value = '') => String(value ?? '').replace(/[&<>"']/g, (ch) => ({
     '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;',
   }[ch]));
 
-  function summarizeCsv(rows){
+  function summarizePrimary(rows, blockedSet, opts = {}){
     const threshold = Number(thresholdEl.value) || 0;
     const list = load();
     const existing = new Set(list.map(d => keyName(d.name)));
@@ -422,11 +535,16 @@ The +Morales Family"></textarea>
     let considered = 0;
     let potentialAdds = 0;
     let emphasizeHits = 0;
+    let filteredOut = 0;
 
     for (let i=0; i<rows.length; i++){
-      const rec = extractNameAmount(rows[i]);
+      const rec = extractPrimaryRecord(rows[i]);
       if (!rec) continue;
       considered++;
+      if (blockedSet && blockedSet.has(rec.donationKey)) {
+        filteredOut++;
+        continue;
+      }
       const k = keyName(rec.name);
       const shouldEmphasize = rec.amount >= threshold;
       if (shouldEmphasize) emphasizeHits++;
@@ -439,7 +557,17 @@ The +Morales Family"></textarea>
       }
     }
 
-    return { considered, potentialAdds, emphasizeHits, sample, threshold };
+    return {
+      considered,
+      potentialAdds,
+      emphasizeHits,
+      sample,
+      threshold,
+      filteredOut,
+      filterActive: Boolean(opts.filterCsvLoaded),
+      filterSourceLabel: filterSource || '',
+      filterCsvLoaded: Boolean(opts.filterCsvLoaded),
+    };
   }
 
   function buildPreviewHtml(summary){
@@ -455,16 +583,20 @@ The +Morales Family"></textarea>
       `<p class="preview-meta">Rows scanned: <strong>${summary.considered}</strong></p>`,
       `<p class="preview-meta">Potential new donors: <strong>${summary.potentialAdds}</strong></p>`,
       `<p class="preview-meta">Will emphasize (≥ $${summary.threshold}): <strong>${summary.emphasizeHits}</strong></p>`,
+      summary.filterCsvLoaded
+        ? `<p class="preview-meta">Anonymous filter (${escapeHtml(summary.filterSourceLabel || 'match OneCause source')}): <strong>${summary.filteredOut}</strong> removed</p>`
+        : '<p class="preview-note">Optional paid-donations CSV not loaded, so anonymous donors will remain visible.</p>',
       listHtml,
     ].join('');
   }
 
   async function showCsvPreviewModal(){
-    if (!parsedRows || !parsedRows.length) {
+    if (!primaryRows || !primaryRows.length) {
       modal.alert('No CSV data loaded yet.');
       return;
     }
-    const summary = summarizeCsv(parsedRows);
+    const blocked = buildAnonKeySet(primaryRows, filterRows);
+    const summary = summarizePrimary(primaryRows, blocked, { filterCsvLoaded: Boolean(filterRows && filterRows.length) });
     const html = buildPreviewHtml(summary);
     const buttons = [
       { label: 'Cancel', value: 'cancel' },
@@ -477,24 +609,26 @@ The +Morales Family"></textarea>
       dismiss: 'cancel',
     });
     if (result === 'import') {
-      importRows(parsedRows);
+      importRows(primaryRows);
     }
   }
 
   function importRows(rows){
     if (!rows || !rows.length){ modal.alert('No CSV loaded yet.'); return; }
     const threshold = Number(thresholdEl.value) || 0;
+    const blocked = buildAnonKeySet(primaryRows, filterRows);
 
     const list = load();
     const emphSet = new Set(emphCache);
     const existing = new Set(list.map(d => keyName(d.name)));
     const newOnes = [];
-    let considered = 0, added = 0, emphasized = 0;
+    let considered = 0, added = 0, emphasized = 0, filteredOut = 0;
 
     for (let i=0; i<rows.length; i++){
-      const rec = extractNameAmount(rows[i]);
+      const rec = extractPrimaryRecord(rows[i]);
       if (!rec) continue;
       considered++;
+      if (blocked.has(rec.donationKey)) { filteredOut++; continue; }
       const k = keyName(rec.name);
       if (!existing.has(k)){
         existing.add(k);
@@ -515,7 +649,8 @@ The +Morales Family"></textarea>
       }
       renderChips();
     }
-    modal.alert('Import complete. Considered: '+considered+', Added: '+added+', Emphasized (>= $'+threshold+'): '+emphasized);
+    const filterMsg = blocked.size ? `, Filtered anonymous: ${filteredOut}` : '';
+    modal.alert('Import complete. Considered: '+considered+', Added: '+added+', Emphasized (>= $'+threshold+'): '+emphasized+filterMsg);
   }
 
   // Chip event delegation
@@ -622,6 +757,7 @@ The +Morales Family"></textarea>
     if (e.key === KEY || e.key === EMPH_KEY) renderChips();
   });
 
+  updateCsvStatus();
   renderChips();
 })();
 </script>
