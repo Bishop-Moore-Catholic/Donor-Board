@@ -40,7 +40,6 @@ The +Morales Family"></textarea>
         <div class="controls">
           <div class="field"><label for="threshold"><strong>Emphasize threshold ($)</strong></label> <input type="number" id="threshold" min="0" step="50" value="1000"></div>
           <div class="field"><span>Columns used:</span> <code>B (amount)</code> & <code>M (name)</code></div>
-          <div class="field"><button id="importPreview" type="button">Preview first 10</button> <button id="importAll" class="primary" type="button">Import all rows</button></div>
         </div>
       </div>
 
@@ -79,42 +78,208 @@ The +Morales Family"></textarea>
       </div>
     </aside>
   </div>
+  <div id="modalOverlay" class="modal-overlay" aria-hidden="true">
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-describedby="modalBody">
+      <div class="modal-header">
+        <h2 id="modalTitle" class="modal-title"></h2>
+        <button type="button" class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div id="modalBody" class="modal-body"></div>
+      <div class="modal-actions"></div>
+    </div>
+  </div>
 
 <script>
 (() => {
   const KEY = 'donorList.v1';
   const EMPH_KEY = 'donorEmphasized.v1';
   const THEME_KEY = 'donorTheme.v1';
-  const CH = new BroadcastChannel('donors');
+  const MSG_KEY = 'donorBroadcast.v1';
+  const channel = (() => {
+    try { return new BroadcastChannel('donors'); }
+    catch (err) {
+      console.warn('[DonorAdmin] BroadcastChannel unavailable:', err);
+      return null;
+    }
+  })();
+  const makeMessageId = (() => {
+    let counter = 0;
+    return () => `${Date.now().toString(36)}:${(counter++ % 1e6).toString(36)}`;
+  })();
+  function broadcast(msg) {
+    const payload = { ...msg, _id: msg && msg._id ? msg._id : makeMessageId() };
+    if (channel) {
+      try { channel.postMessage(payload); }
+      catch (err) { console.error('[DonorAdmin] Broadcast send failed:', err); }
+    }
+    try {
+      localStorage.setItem(MSG_KEY, JSON.stringify(payload));
+    } catch (err) {
+      console.error('[DonorAdmin] Storage broadcast failed:', err);
+    }
+  }
 
   const $ = sel => document.querySelector(sel);
   const chipsEl = $('#chips');
+  const modal = (() => {
+    const overlay = document.getElementById('modalOverlay');
+    const titleEl = overlay?.querySelector('.modal-title');
+    const bodyEl = overlay?.querySelector('.modal-body');
+    const actionsEl = overlay?.querySelector('.modal-actions');
+    const closeBtn = overlay?.querySelector('.modal-close');
+    if (!overlay || !titleEl || !bodyEl || !actionsEl || !closeBtn) {
+      return {
+        alert(message) { window.alert(message); return Promise.resolve(true); },
+        confirm(message) { return Promise.resolve(window.confirm(message)); },
+        dialog(opts = {}) {
+          const msg = typeof opts.message === 'string' ? opts.message : '';
+          const res = window.confirm(msg || '');
+          return Promise.resolve(res ? (opts.okValue ?? true) : (opts.cancelValue ?? false));
+        },
+      };
+    }
+
+    let resolver = null;
+    let dismissValue = null;
+    let lastFocused = null;
+
+    function close(value) {
+      if (!overlay.classList.contains('open')) return;
+      overlay.classList.remove('open');
+      overlay.setAttribute('aria-hidden', 'true');
+      document.removeEventListener('keydown', handleKeydown);
+      if (lastFocused && typeof lastFocused.focus === 'function') {
+        lastFocused.focus();
+      }
+      lastFocused = null;
+      const resolve = resolver;
+      resolver = null;
+      if (resolve) resolve(value);
+    }
+
+    function handleKeydown(e) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        close(dismissValue);
+      }
+    }
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) close(dismissValue);
+    });
+    closeBtn.addEventListener('click', () => close(dismissValue));
+
+    function setBodyContent(message) {
+      bodyEl.innerHTML = '';
+      if (typeof message === 'string') {
+        bodyEl.textContent = message;
+        return;
+      }
+      if (message && typeof message === 'object') {
+        if (typeof message.html === 'string') {
+          bodyEl.innerHTML = message.html;
+          return;
+        }
+        if (typeof Node !== 'undefined' && message.node instanceof Node) {
+          bodyEl.appendChild(message.node);
+          return;
+        }
+      }
+      bodyEl.textContent = '';
+    }
+
+    function show({ title = 'Notice', message = '', buttons = [], dismiss = false }) {
+      return new Promise((resolve) => {
+        resolver = resolve;
+        dismissValue = dismiss;
+        lastFocused = document.activeElement;
+        titleEl.textContent = title;
+        setBodyContent(message);
+        actionsEl.innerHTML = '';
+        let focusSet = false;
+        buttons.forEach((btn, idx) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'modal-btn' + (btn.variant === 'primary' ? ' primary' : '');
+          b.textContent = btn.label;
+          if (btn.disabled) b.disabled = true;
+          b.addEventListener('click', () => close(btn.value));
+          actionsEl.appendChild(b);
+          if (!focusSet && (btn.autoFocus || btn.variant === 'primary' || idx === 0)) {
+            setTimeout(() => b.focus(), 0);
+            focusSet = true;
+          }
+        });
+        overlay.classList.add('open');
+        overlay.removeAttribute('aria-hidden');
+        document.addEventListener('keydown', handleKeydown);
+      });
+    }
+
+    return {
+      alert(message, opts = {}) {
+        return show({
+          title: opts.title || 'Notice',
+          message,
+          buttons: [{ label: opts.okText || 'OK', value: true, variant: 'primary' }],
+          dismiss: true,
+        });
+      },
+      confirm(message, opts = {}) {
+        return show({
+          title: opts.title || 'Confirm',
+          message,
+          buttons: [
+            { label: opts.cancelText || 'Cancel', value: false },
+            { label: opts.okText || 'Confirm', value: true, variant: 'primary' },
+          ],
+          dismiss: false,
+        });
+      },
+      dialog(options) {
+        return show(options || {});
+      },
+    };
+  })();
 
   const normalizeName = s => s.normalize('NFKC').replace(/\s+/g,' ').trim();
   const keyName = s => normalizeName(s).toLowerCase();
   const load = () => JSON.parse(localStorage.getItem(KEY) || '[]');
   const save = list => localStorage.setItem(KEY, JSON.stringify(list));
-  const loadEmph = () => new Set(JSON.parse(localStorage.getItem(EMPH_KEY) || '[]'));
+  const loadEmph = () => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(EMPH_KEY) || '[]');
+      return new Set(Array.isArray(raw) ? raw : []);
+    } catch {
+      return new Set();
+    }
+  };
   const saveEmph = (set) => localStorage.setItem(EMPH_KEY, JSON.stringify(Array.from(set)));
+  let emphCache = loadEmph();
+  const broadcastEmphasisState = () => broadcast({ type:'emphasisSync', keys: Array.from(emphCache) });
+
+  function persistEmphasis(){
+    saveEmph(emphCache);
+    broadcastEmphasisState();
+  }
 
   function toggleEmphasize(name){
     const k = keyName(name);
-    const set = loadEmph();
-    if (set.has(k)) set.delete(k); else set.add(k);
-    saveEmph(set);
-    CH.postMessage({ type:'emphasize', name });
+    if (emphCache.has(k)) emphCache.delete(k); else emphCache.add(k);
+    persistEmphasis();
+    broadcast({ type:'emphasize', name });
     renderChips();
   }
   function deleteName(name) {
     const k = keyName(name);
     const list = load().filter(d => keyName(d.name) !== k);
     save(list);
-    const set = loadEmph(); if (set.delete(k)) saveEmph(set);
-    CH.postMessage({ type:'remove', key: k });
+    if (emphCache.delete(k)) persistEmphasis();
+    broadcast({ type:'remove', key: k });
     renderChips();
   }
 
-  function makeChip(d){
+  function makeChip(d, emphSet){
     const chip = document.createElement('div');
     chip.className = 'chip';
     chip.dataset.name = d.name;
@@ -124,7 +289,6 @@ The +Morales Family"></textarea>
     label.className = 'label'; label.textContent = d.name;
     chip.appendChild(label);
 
-    const emphSet = loadEmph();
     const isEmph = emphSet.has(keyName(d.name));
     if (isEmph) chip.classList.add('emph');
     if (isEmph) { const b = document.createElement('div'); b.className = 'badge'; b.textContent = '★'; chip.appendChild(b); }
@@ -149,8 +313,9 @@ The +Morales Family"></textarea>
     const list = load();
     document.getElementById('count').textContent = list.length;
     const frag = document.createDocumentFragment();
+    const emphSnapshot = new Set(emphCache);
     list.sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}))
-        .forEach(d => frag.appendChild(makeChip(d)));
+        .forEach(d => frag.appendChild(makeChip(d, emphSnapshot)));
     chipsEl.innerHTML = ''; chipsEl.appendChild(frag);
   }
 
@@ -162,7 +327,7 @@ The +Morales Family"></textarea>
     if (!tokens.length) return;
 
     const list = load();
-    const emphSet = loadEmph();
+    const emphSet = new Set(emphCache);
     const existing = new Set(list.map(d => keyName(d.name)));
     const newOnes = [];
 
@@ -183,11 +348,12 @@ The +Morales Family"></textarea>
 
     if (newOnes.length) {
       localStorage.setItem(KEY, JSON.stringify(list));
-      localStorage.setItem(EMPH_KEY, JSON.stringify(Array.from(emphSet)));
-      CH.postMessage({ type:'added', donors: newOnes });
+      emphCache = emphSet;
+      persistEmphasis();
+      broadcast({ type:'added', donors: newOnes });
       for (const rec of newOnes) {
         const k = keyName(rec.name);
-        if (emphSet.has(k)) CH.postMessage({ type:'emphasize', name: rec.name });
+        if (emphSet.has(k)) broadcast({ type:'emphasize', name: rec.name });
       }
       renderChips();
     }
@@ -196,12 +362,14 @@ The +Morales Family"></textarea>
     document.getElementById('nameInput').focus();
   }
 
-  function clearAll() {
-    if (!confirm('Clear all donors? This will immediately update the display.')) return;
+  async function clearAll() {
+    const confirmed = await modal.confirm('Clear all donors? This will immediately update the display.');
+    if (!confirmed) return;
     localStorage.setItem(KEY, '[]');
-    localStorage.setItem(EMPH_KEY, '[]');
-    CH.postMessage({ type:'reset' });
-    CH.postMessage({ type:'clearEmph' });
+    emphCache.clear();
+    persistEmphasis();
+    broadcast({ type:'reset' });
+    broadcast({ type:'clearEmph' });
     renderChips();
   }
 
@@ -209,8 +377,6 @@ The +Morales Family"></textarea>
   const dropzone = document.getElementById('dropzone');
   const fileInput = document.getElementById('csvInput');
   const browseBtn = document.getElementById('browseBtn');
-  const importPreview = document.getElementById('importPreview');
-  const importAll = document.getElementById('importAll');
   const thresholdEl = document.getElementById('threshold');
   let parsedRows = null;
 
@@ -221,7 +387,8 @@ The +Morales Family"></textarea>
       complete: (res) => {
         parsedRows = Array.isArray(res.data) ? res.data : [];
         console.log('[CSV] parsed rows:', parsedRows.length);
-        alert('CSV loaded: ' + parsedRows.length + ' rows.');
+        fileInput.value = '';
+        showCsvPreviewModal();
       },
       skipEmptyLines: 'greedy'
     });
@@ -242,12 +409,84 @@ The +Morales Family"></textarea>
     return { name, amount: isFinite(amt) ? amt : 0 };
   }
 
-  function importRows(rows, preview=false){
-    if (!rows || !rows.length){ alert('No CSV loaded yet.'); return; }
+  const escapeHtml = (value = '') => String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;',
+  }[ch]));
+
+  function summarizeCsv(rows){
+    const threshold = Number(thresholdEl.value) || 0;
+    const list = load();
+    const existing = new Set(list.map(d => keyName(d.name)));
+    const sample = [];
+    const seenPreview = new Set();
+    let considered = 0;
+    let potentialAdds = 0;
+    let emphasizeHits = 0;
+
+    for (let i=0; i<rows.length; i++){
+      const rec = extractNameAmount(rows[i]);
+      if (!rec) continue;
+      considered++;
+      const k = keyName(rec.name);
+      const shouldEmphasize = rec.amount >= threshold;
+      if (shouldEmphasize) emphasizeHits++;
+      if (!existing.has(k)){
+        potentialAdds++;
+        if (sample.length < 10 && !seenPreview.has(k)){
+          sample.push({ name: rec.name, emphasize: shouldEmphasize });
+          seenPreview.add(k);
+        }
+      }
+    }
+
+    return { considered, potentialAdds, emphasizeHits, sample, threshold };
+  }
+
+  function buildPreviewHtml(summary){
+    if (!summary.considered) {
+      return '<p>No usable rows were found in this CSV.</p>';
+    }
+    const items = summary.sample.map(item => `<li>${escapeHtml(item.name)}${item.emphasize ? ' <span class="preview-star">★</span>' : ''}</li>`).join('');
+    const remainder = Math.max(0, summary.potentialAdds - summary.sample.length);
+    const listHtml = summary.sample.length
+      ? `<ol class="csv-preview-list">${items}</ol>${remainder ? `<p class="preview-note">…and ${remainder} more new name${remainder === 1 ? '' : 's'}.</p>` : ''}`
+      : '<p class="preview-note">No brand-new donors detected.</p>';
+    return [
+      `<p class="preview-meta">Rows scanned: <strong>${summary.considered}</strong></p>`,
+      `<p class="preview-meta">Potential new donors: <strong>${summary.potentialAdds}</strong></p>`,
+      `<p class="preview-meta">Will emphasize (≥ $${summary.threshold}): <strong>${summary.emphasizeHits}</strong></p>`,
+      listHtml,
+    ].join('');
+  }
+
+  async function showCsvPreviewModal(){
+    if (!parsedRows || !parsedRows.length) {
+      modal.alert('No CSV data loaded yet.');
+      return;
+    }
+    const summary = summarizeCsv(parsedRows);
+    const html = buildPreviewHtml(summary);
+    const buttons = [
+      { label: 'Cancel', value: 'cancel' },
+      { label: 'Import All Rows', value: 'import', variant: 'primary', autoFocus: true, disabled: !summary.considered },
+    ];
+    const result = await modal.dialog({
+      title: 'CSV Preview',
+      message: { html },
+      buttons,
+      dismiss: 'cancel',
+    });
+    if (result === 'import') {
+      importRows(parsedRows);
+    }
+  }
+
+  function importRows(rows){
+    if (!rows || !rows.length){ modal.alert('No CSV loaded yet.'); return; }
     const threshold = Number(thresholdEl.value) || 0;
 
     const list = load();
-    const emphSet = loadEmph();
+    const emphSet = new Set(emphCache);
     const existing = new Set(list.map(d => keyName(d.name)));
     const newOnes = [];
     let considered = 0, added = 0, emphasized = 0;
@@ -258,11 +497,6 @@ The +Morales Family"></textarea>
       considered++;
       const k = keyName(rec.name);
       if (!existing.has(k)){
-        if (preview) {
-          console.log('[Preview]', rec.name, 'amt:', rec.amount, 'emph:', rec.amount >= threshold);
-          if (newOnes.length < 10) newOnes.push({ name: rec.name, addedAt: Date.now() });
-          continue;
-        }
         existing.add(k);
         const d = { name: rec.name, id: (crypto?.randomUUID?.() || Math.random().toString(36).slice(2)), addedAt: Date.now() };
         list.push(d); newOnes.push(d); added++;
@@ -270,26 +504,19 @@ The +Morales Family"></textarea>
       if (rec.amount >= threshold) { emphSet.add(k); emphasized++; }
     }
 
-    if (preview){
-      alert('Preview first 10 unique names logged to console. Considered rows: ' + considered);
-      return;
-    }
-
     if (newOnes.length){
       localStorage.setItem(KEY, JSON.stringify(list));
-      localStorage.setItem(EMPH_KEY, JSON.stringify(Array.from(emphSet)));
-      CH.postMessage({ type:'added', donors: newOnes });
+      emphCache = emphSet;
+      persistEmphasis();
+      broadcast({ type:'added', donors: newOnes });
       for (const d of newOnes) {
         const k = keyName(d.name);
-        if (emphSet.has(k)) CH.postMessage({ type:'emphasize', name: d.name });
+        if (emphSet.has(k)) broadcast({ type:'emphasize', name: d.name });
       }
       renderChips();
     }
-    alert('Import complete. Considered: '+considered+', Added: '+added+', Emphasized (>= $'+threshold+'): '+emphasized);
+    modal.alert('Import complete. Considered: '+considered+', Added: '+added+', Emphasized (>= $'+threshold+'): '+emphasized);
   }
-
-  document.getElementById('importPreview').addEventListener('click', () => importRows(parsedRows, true));
-  document.getElementById('importAll').addEventListener('click', () => importRows(parsedRows, false));
 
   // Chip event delegation
   chipsEl.addEventListener('click', (e) => {
@@ -364,14 +591,14 @@ The +Morales Family"></textarea>
         const cur = loadTheme(); if (cur && cur.bgImageData) theme.bgImageData = cur.bgImageData;
       }
       saveTheme(theme);
-      CH.postMessage({ type: 'themeUpdate', theme });
-      alert('Theme pushed to display.');
+      broadcast({ type: 'themeUpdate', theme });
+      modal.alert('Theme pushed to display.');
     });
 
     document.getElementById('resetTheme').addEventListener('click', () => {
       localStorage.removeItem(THEME_KEY);
-      CH.postMessage({ type: 'themeUpdate', theme: defaults });
-      alert('Theme reset to defaults and pushed.');
+      broadcast({ type: 'themeUpdate', theme: defaults });
+      modal.alert('Theme reset to defaults and pushed.');
       bg.value = toHex(defaults.bg); tcol.value = toHex(defaults.titleColor);
       ncol.value = toHex(defaults.nameColor); ecol.value = toHex(defaults.emphColor);
       nwt.value = String(defaults.nameWeight); ewt.value = String(defaults.emphWeight); esc.value = String(defaults.emphScale);
@@ -379,7 +606,7 @@ The +Morales Family"></textarea>
     });
 
     // push once on load so the display syncs even if opened later
-    CH.postMessage({ type: 'themeUpdate', theme: saved });
+    broadcast({ type: 'themeUpdate', theme: saved });
   }
   initThemeUI();
 
@@ -388,7 +615,12 @@ The +Morales Family"></textarea>
   document.getElementById('clearAll').addEventListener('click', clearAll);
   document.getElementById('openDisplay').addEventListener('click', () => window.open('display.html', 'DonorDisplay', 'noopener,noreferrer'));
   document.getElementById('nameInput').addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') addFromInput(); });
-  window.addEventListener('storage', (e) => { if (e.key === KEY || e.key === EMPH_KEY) renderChips(); });
+  window.addEventListener('storage', (e) => {
+    if (e.key === EMPH_KEY) {
+      emphCache = loadEmph();
+    }
+    if (e.key === KEY || e.key === EMPH_KEY) renderChips();
+  });
 
   renderChips();
 })();

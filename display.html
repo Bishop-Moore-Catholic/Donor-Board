@@ -18,7 +18,28 @@
   const KEY = 'donorList.v1';
   const EMPH_KEY = 'donorEmphasized.v1';
   const THEME_KEY = 'donorTheme.v1';
-  const CH = new BroadcastChannel('donors');
+  const MSG_KEY = 'donorBroadcast.v1';
+  const channel = (() => {
+    try { return new BroadcastChannel('donors'); }
+    catch (err) {
+      console.warn('[DonorDisplay] BroadcastChannel unavailable:', err);
+      return null;
+    }
+  })();
+  const handledQueue = [];
+  const handledSet = new Set();
+  const MAX_HANDLED = 200;
+  function alreadyHandled(id){
+    if (!id) return false;
+    if (handledSet.has(id)) return true;
+    handledSet.add(id);
+    handledQueue.push(id);
+    if (handledQueue.length > MAX_HANDLED) {
+      const oldest = handledQueue.shift();
+      handledSet.delete(oldest);
+    }
+    return false;
+  }
   const svg = d3.select('#cloud');
   const stage = document.getElementById('stage');
   let W = stage.clientWidth, H = stage.clientHeight;
@@ -44,6 +65,42 @@
   }
   function loadTheme(){ try { return JSON.parse(localStorage.getItem(THEME_KEY) || 'null'); } catch { return null; } }
   function saveTheme(theme){ localStorage.setItem(THEME_KEY, JSON.stringify(theme)); }
+  const lastState = {
+    donors: localStorage.getItem(KEY),
+    emph: localStorage.getItem(EMPH_KEY),
+    theme: localStorage.getItem(THEME_KEY),
+    msg: localStorage.getItem(MSG_KEY),
+  };
+  const serializeEmphasis = (set) => JSON.stringify(Array.from(set));
+  function setEmphasisFromKeys(keys, { persist = false } = {}) {
+    emphasized = new Set((Array.isArray(keys) ? keys : []).map(k => keyName(String(k || ''))));
+    if (persist) {
+      saveEmph(emphasized);
+      lastState.emph = serializeEmphasis(emphasized);
+    }
+  }
+  function refreshEmphasisStyles(){
+    const nodes = svg.selectAll('text.word');
+    if (!nodes.size() || !prevPos.size) { scheduleRedraw(); return; }
+    const scaleVal = emphScale();
+    let missing = false;
+    nodes.each(function(d){
+      const key = (d && d.key) || keyName(this.textContent || '');
+      const pos = prevPos.get(key);
+      if (!pos) { missing = true; return; }
+      const isEmph = emphasized.has(key);
+      d3.select(this)
+        .classed('emph', isEmph)
+        .transition().duration(200)
+        .attr('transform', 'translate(' + pos.x + ',' + pos.y + ') rotate(' + (pos.rotate || 0) + ') scale(' + (isEmph ? scaleVal : 1) + ')');
+    });
+    if (missing) scheduleRedraw();
+  }
+  function syncEmphasisFromStorage(){
+    emphasized = loadEmph();
+    lastState.emph = localStorage.getItem(EMPH_KEY);
+    refreshEmphasisStyles();
+  }
 
   function setViewBox(){ svg.attr('viewBox', '0 0 ' + W + ' ' + H); }
   function resize(){ W = stage.clientWidth; H = stage.clientHeight; setViewBox(); scheduleRedraw(); }
@@ -138,7 +195,10 @@
 
     let changed = false;
     emphasized.forEach(k => { if (!donors.find(d => keyName(d.name) === k)) { emphasized.delete(k); changed = true; } });
-    if (changed) saveEmph(emphasized);
+    if (changed) {
+      saveEmph(emphasized);
+      lastState.emph = serializeEmphasis(emphasized);
+    }
 
     const base = (total <= 50) ? cssBase() : cssBase() * Math.max(0.6, 1 - 0.4 * ((total - 50) / 200));
     const tries = [
@@ -220,21 +280,9 @@
     })();
   }
 
-  function toggleEmphasize(nameKey){
-    const scaleVal = (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--emph-scale')) || 1.35);
-    if (emphasized.has(nameKey)) emphasized.delete(nameKey);
-    else emphasized.add(nameKey);
-    saveEmph(emphasized);
-    const p = prevPos.get(nameKey);
-    const node = svg.selectAll('text.word').filter(function(){ return this.textContent && nameKey === (this.textContent.normalize('NFKC').replace(/\s+/g,' ').trim()).toLowerCase(); });
-    if (!node.size() || !p) { scheduleRedraw(); return; }
-    node.classed('emph', emphasized.has(nameKey))
-      .transition().duration(200)
-      .attr('transform', 'translate(' + p.x + ',' + p.y + ') rotate(' + p.rotate + ') scale(' + (emphasized.has(nameKey)?scaleVal:1) + ')');
-  }
-
-  CH.onmessage = (ev) => {
-    const msg = ev.data || {};
+  function handleMessage(rawMsg){
+    const msg = rawMsg || {};
+    if (alreadyHandled(msg._id)) return;
     if (msg.type === 'themeUpdate' && msg.theme) {
       saveTheme(msg.theme);
       applyTheme(msg.theme);
@@ -243,22 +291,93 @@
     else if (msg.type === 'reset') {
       svg.selectAll('*').remove();
       prevPos.clear();
-      emphasized.clear(); saveEmph(emphasized);
+      emphasized.clear();
+      saveEmph(emphasized);
+      lastState.emph = serializeEmphasis(emphasized);
       scheduleRedraw();
     }
-    else if (msg.type === 'clearEmph') { emphasized.clear(); saveEmph(emphasized); scheduleRedraw(); }
-    else if (msg.type === 'emphasize' && msg.name) {
-      const k = (msg.name.normalize('NFKC').replace(/\s+/g,' ').trim()).toLowerCase();
-      toggleEmphasize(k);
+    else if (msg.type === 'clearEmph') {
+      emphasized.clear();
+      saveEmph(emphasized);
+      lastState.emph = serializeEmphasis(emphasized);
+      refreshEmphasisStyles();
+    }
+    else if (msg.type === 'emphasisSync' && Array.isArray(msg.keys)) {
+      setEmphasisFromKeys(msg.keys, { persist: true });
+      refreshEmphasisStyles();
+    }
+    else if (msg.type === 'emphasize') {
+      syncEmphasisFromStorage();
     }
     else if (msg.type === 'remove' && msg.key) {
-      emphasized.delete(msg.key); saveEmph(emphasized);
+      const changed = emphasized.delete(msg.key);
+      if (changed) {
+        saveEmph(emphasized);
+        lastState.emph = serializeEmphasis(emphasized);
+        refreshEmphasisStyles();
+      }
       scheduleRedraw();
     }
-  };
+  }
+
+  if (channel) channel.onmessage = (ev) => handleMessage(ev.data || {});
 
   const savedTheme = loadTheme(); if (savedTheme) applyTheme(savedTheme);
-  window.addEventListener('storage', (e) => { if (e.key === KEY || e.key === EMPH_KEY || e.key === THEME_KEY) scheduleRedraw(); });
+  function pollLocalState(){
+    try {
+      const donorsRaw = localStorage.getItem(KEY);
+      if (donorsRaw !== lastState.donors) {
+        lastState.donors = donorsRaw;
+        scheduleRedraw();
+      }
+      const emphRaw = localStorage.getItem(EMPH_KEY);
+      if (emphRaw !== lastState.emph) {
+        lastState.emph = emphRaw;
+        emphasized = loadEmph();
+        refreshEmphasisStyles();
+      }
+      const themeRaw = localStorage.getItem(THEME_KEY);
+      if (themeRaw !== lastState.theme) {
+        lastState.theme = themeRaw;
+        const latestTheme = loadTheme();
+        if (latestTheme) applyTheme(latestTheme);
+      }
+      const msgRaw = localStorage.getItem(MSG_KEY);
+      if (msgRaw && msgRaw !== lastState.msg) {
+        lastState.msg = msgRaw;
+        try { handleMessage(JSON.parse(msgRaw)); }
+        catch (err) { console.error('[DonorDisplay] Poll parse failed', err); }
+      }
+    } catch (err) {
+      console.error('[DonorDisplay] Poll failed', err);
+    }
+  }
+  pollLocalState();
+  setInterval(pollLocalState, 1000);
+  window.addEventListener('storage', (e) => {
+    if (e.key === MSG_KEY && e.newValue) {
+      lastState.msg = e.newValue;
+      try { handleMessage(JSON.parse(e.newValue)); } catch (err) { console.error('[DonorDisplay] Failed to parse broadcast fallback', err); }
+      return;
+    }
+    if (e.key === KEY) {
+      lastState.donors = e.newValue;
+      scheduleRedraw();
+      return;
+    }
+    if (e.key === EMPH_KEY) {
+      lastState.emph = e.newValue;
+      emphasized = loadEmph();
+      refreshEmphasisStyles();
+      return;
+    }
+    if (e.key === THEME_KEY) {
+      lastState.theme = e.newValue;
+      const latestTheme = loadTheme();
+      if (latestTheme) applyTheme(latestTheme);
+      scheduleRedraw();
+    }
+  });
 
   function setViewBox(){ svg.attr('viewBox', '0 0 ' + W + ' ' + H); }
   setViewBox();
