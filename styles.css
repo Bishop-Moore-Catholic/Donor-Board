@@ -16,6 +16,8 @@
   --emph-scale: 1.35;
 
   --base-size: clamp(18px, 2.2vw, 36px);
+  --total-color: #0f0f0f;
+  --total-weight: 500;
 }
 
 * { box-sizing: border-box; }
@@ -34,6 +36,13 @@ body { background: var(--bg); color: var(--name-color); }
   font-weight: var(--title-weight);
   letter-spacing: var(--title-tracking);
   line-height: 1.05;
+}
+.db-total {
+  text-align: center;
+  margin: 0 0 24px;
+  color: var(--total-color);
+  font-weight: var(--total-weight);
+  font-size: clamp(24px, 5.5vw, 72px);
 }
 
 #stage { position: relative; width: 100vw; height: calc(100vh - 110px); }

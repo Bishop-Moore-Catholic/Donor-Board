@@ -47,6 +47,10 @@ The +Morales Family"></textarea>
           <div>Primary (<em>OneCause - Donations</em>): <span id="primaryStatus" class="csv-pill">Not loaded</span></div>
           <div>Filter (<em>paid-donations</em>): <span id="filterStatus" class="csv-pill">Not loaded</span></div>
         </div>
+        <div class="field" style="margin-top:8px;">
+          <label for="totalDisplay"><strong>Total raised label</strong></label>
+          <input type="text" id="totalDisplay" placeholder="e.g. $2.5M Raised" style="flex:1; min-width:220px;">
+        </div>
       </div>
 
       <div class="admin-chips" style="margin-top:16px;">
@@ -72,6 +76,12 @@ The +Morales Family"></textarea>
           <div class="theme-row"><label>Emph. weight</label>
             <select id="emphWeight">
               <option>400</option><option>500</option><option>600</option><option selected>700</option><option>800</option><option>900</option>
+            </select>
+          </div>
+          <div class="theme-row"><label>Total color</label><input type="color" id="totalColor"></div>
+          <div class="theme-row"><label>Total weight</label>
+            <select id="totalWeight">
+              <option>300</option><option selected>500</option><option>600</option><option>700</option><option>800</option>
             </select>
           </div>
           <div class="theme-row"><label>Emph. scale</label><input type="range" id="emphScale" min="1.0" max="1.8" step="0.05" value="1.35"></div>
@@ -100,6 +110,7 @@ The +Morales Family"></textarea>
   const KEY = 'donorList.v1';
   const EMPH_KEY = 'donorEmphasized.v1';
   const THEME_KEY = 'donorTheme.v1';
+  const TOTAL_KEY = 'donorTotal.v1';
   const MSG_KEY = 'donorBroadcast.v1';
   const FILTER_SOURCE_KEY = 'donorPaidSource.v1';
   const channel = (() => {
@@ -386,6 +397,7 @@ The +Morales Family"></textarea>
   const browseBtn = document.getElementById('browseBtn');
   const thresholdEl = document.getElementById('threshold');
   const filterSourceInput = document.getElementById('filterSource');
+  const totalInput = document.getElementById('totalDisplay');
   const primaryStatusEl = document.getElementById('primaryStatus');
   const filterStatusEl = document.getElementById('filterStatus');
   let primaryRows = null;
@@ -398,6 +410,13 @@ The +Morales Family"></textarea>
     filterSource = String(val || '').trim();
     localStorage.setItem(FILTER_SOURCE_KEY, filterSource);
   };
+  const loadTotal = () => localStorage.getItem(TOTAL_KEY) || '';
+  let totalLabel = loadTotal();
+  const persistTotal = (val) => {
+    totalLabel = String(val || '');
+    localStorage.setItem(TOTAL_KEY, totalLabel);
+    broadcast({ type:'totalUpdate', total: totalLabel });
+  };
   if (filterSourceInput) {
     filterSourceInput.value = filterSource;
     filterSourceInput.addEventListener('change', (e) => {
@@ -405,6 +424,13 @@ The +Morales Family"></textarea>
       updateCsvStatus();
     });
   }
+  if (totalInput) {
+    totalInput.value = totalLabel;
+    totalInput.addEventListener('input', (e) => {
+      persistTotal(e.target.value);
+    });
+  }
+  broadcast({ type:'totalUpdate', total: totalLabel });
 
   function detectCsvKind(fileName = '', rows){
     const name = String(fileName || '').toLowerCase();
@@ -684,6 +710,8 @@ The +Morales Family"></textarea>
     emphColor: gcs.getPropertyValue('--emph-color').trim() || '#0f0f0f',
     emphWeight: Number(gcs.getPropertyValue('--emph-weight').trim() || '800'),
     emphScale: parseFloat(gcs.getPropertyValue('--emph-scale')) || 1.35,
+    totalColor: gcs.getPropertyValue('--total-color').trim() || '#0f0f0f',
+    totalWeight: Number(gcs.getPropertyValue('--total-weight').trim() || '500'),
   };
   function loadTheme(){ try { return JSON.parse(localStorage.getItem(THEME_KEY) || 'null'); } catch { return null; } }
   function saveTheme(theme){ localStorage.setItem(THEME_KEY, JSON.stringify(theme)); }
@@ -697,17 +725,29 @@ The +Morales Family"></textarea>
     const ewt = document.getElementById('emphWeight');
     const esc = document.getElementById('emphScale');
     const bgi = document.getElementById('bgImage');
+    const totCol = document.getElementById('totalColor');
+    const totW = document.getElementById('totalWeight');
 
     const saved = loadTheme() || defaults;
-    const toHex = (v)=> /^#/.test(v)?v.trim():('#'+Array.from((v.match(/\d+/g)||[]).slice(0,3)).map(n=>('0'+(+n).toString(16)).slice(-2)).join(''));
+    const toHex = (v)=> {
+      if (!v) return '#000000';
+      const value = String(v).trim();
+      if (!value) return '#000000';
+      if (/^#/i.test(value)) return value;
+      const parts = value.match(/\d+/g);
+      if (!parts || !parts.length) return '#000000';
+      return '#'+Array.from(parts.slice(0,3)).map(n=>('0'+Math.max(0, Math.min(255, Number(n)||0)).toString(16)).slice(-2)).join('');
+    };
 
     bg.value = toHex(saved.bg);
     tcol.value = toHex(saved.titleColor);
     ncol.value = toHex(saved.nameColor);
     ecol.value = toHex(saved.emphColor);
+    totCol.value = toHex(saved.totalColor);
     nwt.value = String(saved.nameWeight);
     ewt.value = String(saved.emphWeight);
     esc.value = String(saved.emphScale);
+    totW.value = String(saved.totalWeight || defaults.totalWeight);
 
     document.getElementById('pushTheme').addEventListener('click', async () => {
       const theme = {
@@ -718,6 +758,8 @@ The +Morales Family"></textarea>
         emphColor: ecol.value,
         emphWeight: Number(ewt.value),
         emphScale: parseFloat(esc.value),
+        totalColor: totCol.value,
+        totalWeight: Number(totW.value),
       };
       if (bgi.files && bgi.files[0]) {
         const dataUrl = await new Promise(res => { const fr = new FileReader(); fr.onload = e => res(e.target.result); fr.readAsDataURL(bgi.files[0]); });
@@ -736,7 +778,9 @@ The +Morales Family"></textarea>
       modal.alert('Theme reset to defaults and pushed.');
       bg.value = toHex(defaults.bg); tcol.value = toHex(defaults.titleColor);
       ncol.value = toHex(defaults.nameColor); ecol.value = toHex(defaults.emphColor);
+      totCol.value = toHex(defaults.totalColor);
       nwt.value = String(defaults.nameWeight); ewt.value = String(defaults.emphWeight); esc.value = String(defaults.emphScale);
+      totW.value = String(defaults.totalWeight);
       bgi.value='';
     });
 
@@ -753,6 +797,10 @@ The +Morales Family"></textarea>
   window.addEventListener('storage', (e) => {
     if (e.key === EMPH_KEY) {
       emphCache = loadEmph();
+    }
+    if (e.key === TOTAL_KEY) {
+      totalLabel = loadTotal();
+      if (totalInput) totalInput.value = totalLabel;
     }
     if (e.key === KEY || e.key === EMPH_KEY) renderChips();
   });

@@ -11,6 +11,7 @@
 </head>
 <body>
   <h1 class="db-title">Thank You To Our Generous Donors!</h1>
+  <h2 class="db-total" id="dbTotal"></h2>
   <div id="stage"><svg id="cloud" aria-label="Donor word cloud"></svg></div>
 
 <script>
@@ -19,6 +20,7 @@
   const EMPH_KEY = 'donorEmphasized.v1';
   const THEME_KEY = 'donorTheme.v1';
   const MSG_KEY = 'donorBroadcast.v1';
+  const TOTAL_KEY = 'donorTotal.v1';
   const channel = (() => {
     try { return new BroadcastChannel('donors'); }
     catch (err) {
@@ -42,6 +44,7 @@
   }
   const svg = d3.select('#cloud');
   const stage = document.getElementById('stage');
+  const totalEl = document.getElementById('dbTotal');
   let W = stage.clientWidth, H = stage.clientHeight;
 
   const rootStyle = document.documentElement.style;
@@ -54,6 +57,8 @@
     rootStyle.setProperty('--emph-color', theme.emphColor);
     rootStyle.setProperty('--emph-weight', String(theme.emphWeight));
     rootStyle.setProperty('--emph-scale', String(theme.emphScale));
+    if (theme.totalColor) rootStyle.setProperty('--total-color', theme.totalColor);
+    if (theme.totalWeight) rootStyle.setProperty('--total-weight', String(theme.totalWeight));
     if (theme.bgImageData) {
       document.body.style.backgroundImage = `url(${theme.bgImageData})`;
       document.body.style.backgroundSize = 'cover';
@@ -65,11 +70,16 @@
   }
   function loadTheme(){ try { return JSON.parse(localStorage.getItem(THEME_KEY) || 'null'); } catch { return null; } }
   function saveTheme(theme){ localStorage.setItem(THEME_KEY, JSON.stringify(theme)); }
+  const renderTotal = (text) => { if (totalEl) totalEl.textContent = text || ''; };
+  const loadTotal = () => localStorage.getItem(TOTAL_KEY) || '';
+  renderTotal(loadTotal());
+
   const lastState = {
     donors: localStorage.getItem(KEY),
     emph: localStorage.getItem(EMPH_KEY),
     theme: localStorage.getItem(THEME_KEY),
     msg: localStorage.getItem(MSG_KEY),
+    total: localStorage.getItem(TOTAL_KEY),
   };
   const serializeEmphasis = (set) => JSON.stringify(Array.from(set));
   function setEmphasisFromKeys(keys, { persist = false } = {}) {
@@ -360,6 +370,13 @@
     else if (msg.type === 'emphasize') {
       syncEmphasisFromStorage();
     }
+    else if (msg.type === 'totalUpdate') {
+      renderTotal(msg.total || '');
+      lastState.total = msg.total || '';
+      if (msg.total === undefined) {
+        renderTotal(loadTotal());
+      }
+    }
     else if (msg.type === 'remove' && msg.key) {
       const changed = emphasized.delete(msg.key);
       if (changed) {
@@ -399,6 +416,11 @@
         try { handleMessage(JSON.parse(msgRaw)); }
         catch (err) { console.error('[DonorDisplay] Poll parse failed', err); }
       }
+      const totalRaw = localStorage.getItem(TOTAL_KEY);
+      if (totalRaw !== lastState.total) {
+        lastState.total = totalRaw;
+        renderTotal(totalRaw || '');
+      }
     } catch (err) {
       console.error('[DonorDisplay] Poll failed', err);
     }
@@ -420,6 +442,11 @@
       lastState.emph = e.newValue;
       emphasized = loadEmph();
       refreshEmphasisStyles();
+      return;
+    }
+    if (e.key === TOTAL_KEY) {
+      lastState.total = e.newValue;
+      renderTotal(e.newValue || '');
       return;
     }
     if (e.key === THEME_KEY) {
